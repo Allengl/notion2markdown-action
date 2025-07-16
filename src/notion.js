@@ -56,7 +56,7 @@ function init(cfg) {
     }
   });
 
-  if (!config?.pic_base_url && config.picBed?.uploader) {
+  if (!config.pic_base_url && config.picBed?.uploader) {
     const bed = config.picBed[config.picBed?.uploader]
     if (bed?.customUrl && bed?.path) {
       config.pic_base_url = new URL(bed.path, bed.customUrl).href;
