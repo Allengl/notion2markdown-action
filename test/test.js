@@ -10,12 +10,14 @@
  */
 const notion = require("../src/notion");
 const fs = require("fs");
+console.info("Notion2markdown-action test started...");
 if (!fs.existsSync("./config.json")) {
     console.error("请先创建配置文件");
 }
 // load 
 const configRaw = fs.readFileSync("./config.json");
 const config = JSON.parse(configRaw);
+console.info("config loaded:", config);
 // const config = ;
 (async function () {
     notion.init(config);
