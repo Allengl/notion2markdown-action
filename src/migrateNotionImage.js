@@ -9,15 +9,13 @@
  * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
  */
 
-
-const path = require("path");
-const sizeOf = require("image-size");
-const imagemin = require("imagemin");
-const imageSize = require("image-size");
-const imageminPngquant = require("imagemin-pngquant");
-const imageminMozjpeg = require("imagemin-mozjpeg");
-const imageminGifsicle = require("imagemin-gifsicle");
-const imageminSvgo = require("imagemin-svgo");
+import path from "path";
+import sizeOf from "image-size";
+import imagemin from "imagemin";
+import imageSize from "image-size";
+import imageminPngquant from "imagemin-pngquant";
+import imageminJpegtran from "imagemin-jpegtran";
+import imageminGifsicle from "imagemin-gifsicle";
 
 
 async function migrateNotionImageFromURL(ctx, url) {
@@ -28,7 +26,7 @@ async function migrateNotionImageFromURL(ctx, url) {
     return url;
   }
   // 检查URL对应的图片是否已经存在
-  const base_url = ctx.getConfig('pic-base-url') || null;
+  const base_url = ctx?.getConfig('pic-base-url') || null;
   const uuidreg = /[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}/g;
   const uuid = url.match(uuidreg)?.pop();
   let ext = url.split('?')[0].split('.').pop()?.toLowerCase();
@@ -119,7 +117,7 @@ function compressPic(item) {
   return imagemin.buffer(item.buffer, {
     plugins: [
       imageminPngquant(),
-      imageminMozjpeg(),
+      imageminJpegtran(),
       imageminGifsicle(),
       // imageminSvgo()
     ],
@@ -155,7 +153,6 @@ function getImageSize(buffer) {
   }
 }
 
-
-module.exports = {
-  migrateNotionImageFromURL
+export {
+  migrateNotionImageFromURL,
 }

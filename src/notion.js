@@ -8,19 +8,19 @@
  * 
  * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
  */
-const { Client } = require("@notionhq/client");
-const { writeFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } = require("fs");
-const { NotionToMarkdown } = require("notion-to-md");
-const { parse } = require("twemoji");
-const { getBlockChildren } = require("notion-to-md/build/utils/notion");
-const YAML = require("yaml");
-const path = require("path");
-const { PicGo } = require("picgo");
-const { migrateNotionImageFromURL } = require("./migrateNotionImage")
-// const Migrater = require("./migrate");
-const { format } = require("prettier");
-const moment = require('moment-timezone');
-const t = require('./customTransformer');
+import {Client} from "@notionhq/client";
+import {writeFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync} from "fs";
+import {NotionToMarkdown} from "notion-to-md";
+// import {getBlockChildren} from "notion-to-md/build/utils/notion";
+// import {parse} from "twemoji";
+import YAML from "yaml";
+import path from "path";
+import {PicGo} from "picgo";
+import {migrateNotionImageFromURL} from "./migrateNotionImage.js";
+import {format} from "prettier"
+import moment from 'moment-timezone';
+import * as t from './customTransformer.js';
+
 
 let config = {
   notion_secret: "",
@@ -80,7 +80,7 @@ function init(cfg) {
 
   // passing notion client to the option
   n2m = new NotionToMarkdown({ notionClient: notion });
-  n2m.setCustomTransformer("callout", callout(n2m));
+  // n2m.setCustomTransformer("callout", callout(n2m));
   n2m.setCustomTransformer("bookmark", t.bookmark);
   n2m.setCustomTransformer("video", t.video);
   n2m.setCustomTransformer("embed", t.embed);
@@ -408,47 +408,47 @@ async function getPropertiesDict(page) {
   return data;
 }
 
-/**
- *
- * @param {ListBlockChildrenResponseResult} block
- */
-function callout(n2m) {
-  return async (block) => {
-    let callout_str = block.callout.text.map((a) => a.plain_text).join("");
-    if (!block.has_children) {
-      return callout2md(callout_str, block.callout.icon);
-    }
+// /**
+//  *
+//  * @param {ListBlockChildrenResponseResult} block
+//  */
+// function callout(n2m) {
+//   return async (block) => {
+//     let callout_str = block.callout.text.map((a) => a.plain_text).join("");
+//     if (!block.has_children) {
+//       return callout2md(callout_str, block.callout.icon);
+//     }
 
-    const callout_children_object = await getBlockChildren(
-      n2m.notionClient,
-      block.id,
-      100
-    );
-    // parse children blocks to md object
-    const callout_children = await n2m.blocksToMarkdown(
-      callout_children_object
-    );
+//     const callout_children_object = await getBlockChildren(
+//       n2m.notionClient,
+//       block.id,
+//       100
+//     );
+//     // parse children blocks to md object
+//     const callout_children = await n2m.blocksToMarkdown(
+//       callout_children_object
+//     );
 
-    callout_str +=
-      "\n" + callout_children.map((child) => child.parent).join("\n\n");
+//     callout_str +=
+//       "\n" + callout_children.map((child) => child.parent).join("\n\n");
 
-    return callout2md(callout_str.trim(), block.callout.icon);
-  };
-}
+//     return callout2md(callout_str.trim(), block.callout.icon);
+//   };
+// }
 
-function callout2md(str, icon) {
-  return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
-}
+// function callout2md(str, icon) {
+//   return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
+// }
 
-function icon2md(icon) {
-  switch (icon.type) {
-    case "emoji":
-      return parse(icon.emoji);
-    case "external":
-      return `<img src="${icon.external.url}" width="25px" />\n`;
-  }
-  return "";
-}
+// function icon2md(icon) {
+//   switch (icon.type) {
+//     case "emoji":
+//       return parse(icon.emoji);
+//     case "external":
+//       return `<img src="${icon.external.url}" width="25px" />\n`;
+//   }
+//   return "";
+// }
 
 function getPropVal(data) {
   let val = data[data.type];
@@ -480,7 +480,7 @@ function getPropVal(data) {
   }
 }
 
-module.exports = {
+export {
   sync,
   init,
-};
+}

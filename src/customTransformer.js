@@ -9,16 +9,15 @@
  * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
  */
 
-const axios = require('axios');
-const cheerio = require('cheerio');
-
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 
 function capitalizeFirstLetter(str) {
     return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 function getUrlFromFileOrExternalBlock(block, embed_type = "audio") {
-    type = capitalizeFirstLetter(embed_type.toLowerCase());
+    const type = capitalizeFirstLetter(embed_type.toLowerCase());
     if (!block) {
         console.error(`${type} block is null: `, block);
         return false;
@@ -60,7 +59,7 @@ async function link_preview(block) {
     } catch (err) {
         // check if it's the error from axios
         if (axios.isAxiosError(err)) {
-            console.error(`Failed to query from ${err.config.url}, status: ${err.response.status}, msg: ${err.response.data}`);
+            console.error(`Failed to query from ${err.config.url}, status: ${err.response?.status}, msg: ${err.response?.data}`);
         } else {
             // err.response.data
             console.error("Error parsing link preview block: ", block, err);
@@ -169,6 +168,8 @@ async function bookmark(block) {
     const { bookmark, author } = block;
     if (!bookmark?.url) return "";
     const caption = bookmark.caption && bookmark.caption.length ? bookmark.caption[0].plain_text : "";
+    // console.log("Bookmark block url: ", bookmark.url);
+    // fetch the bookmark preview
     const p = await axios.get(encodeURI(bookmark.url)).then((res) => {
         const $ = cheerio.load(res.data, {
             ignoreWhitespace: true,
@@ -197,7 +198,7 @@ async function bookmark(block) {
         }
     })
         .catch((err) => {
-            console.warn('Bookmark preview fetch error: ', err?.response?.status, err?.response?.statusText);
+            console.warn('Bookmark preview fetch error: ', err?.response?.status, err?.response?.statusText, 'with url: ', bookmark.url);
             return {
                 // title is the domain name
                 title: new URL(bookmark.url).hostname,
@@ -350,12 +351,12 @@ async function image(block) {
     return `![${image_title}](${link})`;
 }
 
-module.exports = {
-    bookmark,
+export {
     link_preview,
-    video,
-    audio,
-    embed,
+    bookmark,
     pdf,
-    image
+    audio,
+    video,
+    embed,
+    image,
 }
