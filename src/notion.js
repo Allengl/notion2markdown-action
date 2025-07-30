@@ -80,7 +80,7 @@ function init(cfg) {
 
   // passing notion client to the option
   n2m = new NotionToMarkdown({ notionClient: notion });
-  // n2m.setCustomTransformer("callout", callout(n2m));
+  n2m.setCustomTransformer("callout", callout(n2m));
   n2m.setCustomTransformer("bookmark", t.bookmark);
   n2m.setCustomTransformer("video", t.video);
   n2m.setCustomTransformer("embed", t.embed);
@@ -412,43 +412,43 @@ async function getPropertiesDict(page) {
 //  *
 //  * @param {ListBlockChildrenResponseResult} block
 //  */
-// function callout(n2m) {
-//   return async (block) => {
-//     let callout_str = block.callout.text.map((a) => a.plain_text).join("");
-//     if (!block.has_children) {
-//       return callout2md(callout_str, block.callout.icon);
-//     }
+function callout(n2m) {
+  return async (block) => {
+    let callout_str = block.callout.text.map((a) => a.plain_text).join("");
+    if (!block.has_children) {
+      return callout2md(callout_str, block.callout.icon);
+    }
 
-//     const callout_children_object = await getBlockChildren(
-//       n2m.notionClient,
-//       block.id,
-//       100
-//     );
-//     // parse children blocks to md object
-//     const callout_children = await n2m.blocksToMarkdown(
-//       callout_children_object
-//     );
+    const callout_children_object = await getBlockChildren(
+      n2m.notionClient,
+      block.id,
+      100
+    );
+    // parse children blocks to md object
+    const callout_children = await n2m.blocksToMarkdown(
+      callout_children_object
+    );
 
-//     callout_str +=
-//       "\n" + callout_children.map((child) => child.parent).join("\n\n");
+    callout_str +=
+      "\n" + callout_children.map((child) => child.parent).join("\n\n");
 
-//     return callout2md(callout_str.trim(), block.callout.icon);
-//   };
-// }
+    return callout2md(callout_str.trim(), block.callout.icon);
+  };
+}
 
-// function callout2md(str, icon) {
-//   return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
-// }
+function callout2md(str, icon) {
+  return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
+}
 
-// function icon2md(icon) {
-//   switch (icon.type) {
-//     case "emoji":
-//       return parse(icon.emoji);
-//     case "external":
-//       return `<img src="${icon.external.url}" width="25px" />\n`;
-//   }
-//   return "";
-// }
+function icon2md(icon) {
+  switch (icon.type) {
+    case "emoji":
+      return parse(icon.emoji);
+    case "external":
+      return `<img src="${icon.external.url}" width="25px" />\n`;
+  }
+  return "";
+}
 
 function getPropVal(data) {
   let val = data[data.type];

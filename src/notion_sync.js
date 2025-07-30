@@ -8,8 +8,9 @@
  * 
  * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
  */
-const notion = require("./notion");
-const core = require("@actions/core");
+
+import * as notion from "./notion";
+import core from "@actions/core";
 
 function isJson(str) {
   try {

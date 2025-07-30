@@ -45,7 +45,7 @@ async function migrateNotionImageFromURL(ctx, url) {
     // 从URL获取图片信息
     let imageItem = await handlePicFromURL(ctx, url);
     // 检查是否需要压缩图片
-    if (ctx.getConfig('compress') && ext in ['jpg', 'png', 'gif']) {
+    if (ctx?.getConfig('compress') && ext in ['jpg', 'png', 'gif']) {
       // 压缩图片
       imageItem = await compressPic(imageItem);
     }
