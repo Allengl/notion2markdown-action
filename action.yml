@@ -102,5 +102,5 @@ outputs:
       更新的页面数量
 
 runs:
-  using: 'node22'
+  using: 'node20'
   main: 'dist/index.js'
