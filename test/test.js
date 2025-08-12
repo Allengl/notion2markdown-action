@@ -21,6 +21,9 @@ if (!fs.existsSync("./config.json")) {
 
 const configRaw = fs.readFileSync("./config.json");
 const config = JSON.parse(configRaw);
+// update last_sync_datetime = 24 hour ago
+config.last_sync_datetime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
 console.info("config loaded:", config);
 // const config = ;
 (async function () {
