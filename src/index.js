@@ -4,19 +4,30 @@
  * @LastEditors: Dorad, ddxi@qq.com
  * @LastEditTime: 2023-09-03 22:29:17 +08:00
  * @FilePath: \src\index.js
- * @Description: 
- * 
+ * @Description:
+ *
  * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
  */
 
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+// Polyfill __filename and __dirname for CJS modules bundled by ncc into an ESM output.
+// ESM does not expose these globals, but some bundled packages (e.g. write-file-atomic via picgo) depend on them.
+if (typeof globalThis.__filename === "undefined") {
+  globalThis.__filename = fileURLToPath(import.meta.url);
+}
+if (typeof globalThis.__dirname === "undefined") {
+  globalThis.__dirname = dirname(globalThis.__filename);
+}
+
 import * as notion from "./notion.js";
-import * as core from '@actions/core';
+import * as core from "@actions/core";
 
 function isJson(str) {
   try {
     const obj = JSON.parse(str);
     if (obj && typeof obj == "object") return true;
-  } catch (e) { }
+  } catch (e) {}
   return false;
 }
 
@@ -25,7 +36,9 @@ const picBedConfigStr = core.getInput("pic_bed_config") || "{}";
 
 // test the picBed config
 if (!isJson(picBedConfigStr)) {
-  core.warning("pic_bed_config is not a valid json string, use default config: {}, and set migrate_image to false.");
+  core.warning(
+    "pic_bed_config is not a valid json string, use default config: {}, and set migrate_image to false."
+  );
   migrate_image = false;
 }
 
@@ -42,8 +55,12 @@ if (metas_keeped && metas_keeped.trim().length > 0) {
 }
 
 var metas_excluded = core.getInput("metas_excluded") || [];
-if(metas_excluded){
-  metas_excluded = metas_excluded.split(',').map((v) => v.trim()).filter((v) => v) || [];
+if (metas_excluded) {
+  metas_excluded =
+    metas_excluded
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v) || [];
 }
 
 let config = {
@@ -59,7 +76,8 @@ let config = {
   output_dir: {
     page: core.getInput("output_page_dir") || "source/",
     post: core.getInput("output_post_dir") || "source/_posts/notion/",
-    clean_unpublished_post: core.getInput("clean_unpublished_post") === "true" || false,
+    clean_unpublished_post:
+      core.getInput("clean_unpublished_post") === "true" || false,
   },
   metas_keeped: metas_keeped,
   last_sync_datetime: core.getInput("last_sync_datetime") || null,
@@ -75,18 +93,24 @@ const { url } = require("inspector");
 const { BADFAMILY } = require("dns");
 // try to find all the files under __dirname/vendor* dirs and set the executable permission
 try {
-  execSync(`find ${__dirname}/vendor* -type f -not -name "*.tar.gz" -exec chmod +x {} \\;`);
+  execSync(
+    `find ${__dirname}/vendor* -type f -not -name "*.tar.gz" -exec chmod +x {} \\;`
+  );
 } catch (e) {
-  core.error(`Failed to set the executable permission for all the files under ${__dirname}/vendor* dirs, error: ${e}`);
+  core.error(
+    `Failed to set the executable permission for all the files under ${__dirname}/vendor* dirs, error: ${e}`
+  );
 }
 
 (async function () {
-  core.startGroup('Notion2markdown-action')
+  core.startGroup("Notion2markdown-action");
   notion.init(config);
   // get output
   const out = await notion.sync();
   // set output
   core.setOutput("updated_count", out.handled + out.deleted);
-  core.endGroup('Notion2markdown-action');
-  core.notice(`Notion2markdown-action finished, queried: ${out.queried}, handled: ${out.handled} and deleted: ${out.deleted}`)
+  core.endGroup("Notion2markdown-action");
+  core.notice(
+    `Notion2markdown-action finished, queried: ${out.queried}, handled: ${out.handled} and deleted: ${out.deleted}`
+  );
 })();

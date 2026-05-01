@@ -277630,6 +277630,10 @@ __nccwpck_require__.d(extract_namespaceObject, {
   extract: () => (extract_extract)
 });
 
+// EXTERNAL MODULE: external "url"
+var external_url_ = __nccwpck_require__(87016);
+// EXTERNAL MODULE: external "path"
+var external_path_ = __nccwpck_require__(16928);
 // EXTERNAL MODULE: ./node_modules/@notionhq/client/build/src/index.js
 var src = __nccwpck_require__(68342);
 // EXTERNAL MODULE: external "fs"
@@ -277638,8 +277642,6 @@ var external_fs_ = __nccwpck_require__(79896);
 var build = __nccwpck_require__(59042);
 // EXTERNAL MODULE: ./node_modules/yaml/dist/index.js
 var dist = __nccwpck_require__(38815);
-// EXTERNAL MODULE: external "path"
-var external_path_ = __nccwpck_require__(16928);
 // EXTERNAL MODULE: ./node_modules/picgo/dist/index.cjs.js
 var index_cjs = __nccwpck_require__(55891);
 // EXTERNAL MODULE: ./node_modules/image-size/dist/index.js
@@ -307403,272 +307405,265 @@ async function customTransformer_image(block) {
 
 
 let config = {
-    notion_secret: "",
-    database_id: "",
-    migrate_image: true,
-    picBed: { uploader: "tcyun", current: "tcyun", tcyun: {}, aliyun: {} },
-    status: {
-        name: "",
-        unpublish: "",
-        published: "",
-    },
-    output_dir: {
-        page: "",
-        post: "",
-        clean_unpublished_post: true,
-    },
-    timezone: "Asia/Shanghai",
-    pic_compress: false,
-    last_sync_datetime: 0,
-    metas_keeped: [],
+  notion_secret: "",
+  database_id: "",
+  migrate_image: true,
+  picBed: { uploader: "tcyun", current: "tcyun", tcyun: {}, aliyun: {} },
+  status: {
+    name: "",
+    unpublish: "",
+    published: "",
+  },
+  output_dir: {
+    page: "",
+    post: "",
+    clean_unpublished_post: true,
+  },
+  timezone: "Asia/Shanghai",
+  pic_compress: false,
+  last_sync_datetime: 0,
+  metas_keeped: [],
 };
 
 let notion = new src/* Client */.Kj({ auth: config.notion_secret });
 let n2m = new build.NotionToMarkdown({ notionClient: notion });
-let picgo = new index_cjs/* PicGo */.$b();
+let picgo = null; // lazily initialized inside init()
 
 function init(cfg) {
-    config = cfg;
-    notion = new src/* Client */.Kj({
-        auth: config.notion_secret,
-        config: {
-            separateChildPage: true, // default: false
-        },
-    });
+  config = cfg;
+  // Initialize PicGo here (after __filename/__dirname polyfills are set by src/index.js)
+  picgo = new index_cjs/* PicGo */.$b();
+  notion = new src/* Client */.Kj({
+    auth: config.notion_secret,
+    config: {
+      separateChildPage: true, // default: false
+    },
+  });
 
-    if (!config.pic_base_url && config.picBed?.uploader) {
-        const bed = config.picBed[config.picBed?.uploader];
-        if (bed?.customUrl && bed?.path) {
-            config.pic_base_url = new URL(bed.path, bed.customUrl).href;
-        }
+  if (!config.pic_base_url && config.picBed?.uploader) {
+    const bed = config.picBed[config.picBed?.uploader];
+    if (bed?.customUrl && bed?.path) {
+      config.pic_base_url = new URL(bed.path, bed.customUrl).href;
     }
+  }
 
-    let picgo_config = {
-        picBed: config.picBed,
-        "pic-base-url": config?.pic_base_url || null,
-    };
+  let picgo_config = {
+    picBed: config.picBed,
+    "pic-base-url": config?.pic_base_url || null,
+  };
 
-    picgo_config["compress"] = config.pic_compress ? true : false;
+  picgo_config["compress"] = config.pic_compress ? true : false;
 
-    picgo.setConfig(picgo_config);
-    picgo.setConfig({
-        "picBed.transformer": "base64",
-    });
-    picgo.setConfig({
-        "settings.logLevel": ["success", "error", "warn"],
-    });
+  picgo.setConfig(picgo_config);
+  picgo.setConfig({
+    "picBed.transformer": "base64",
+  });
+  picgo.setConfig({
+    "settings.logLevel": ["success", "error", "warn"],
+  });
 
-    // passing notion client to the option
-    n2m = new build.NotionToMarkdown({ notionClient: notion });
-    n2m.setCustomTransformer("callout", callout(n2m));
-    n2m.setCustomTransformer("bookmark", bookmark);
-    n2m.setCustomTransformer("video", video);
-    n2m.setCustomTransformer("embed", customTransformer_embed);
-    n2m.setCustomTransformer("link_preview", link_preview);
-    n2m.setCustomTransformer("pdf", pdf);
-    n2m.setCustomTransformer("audio", audio);
-    n2m.setCustomTransformer("image", customTransformer_image);
+  // passing notion client to the option
+  n2m = new build.NotionToMarkdown({ notionClient: notion });
+  n2m.setCustomTransformer("callout", callout(n2m));
+  n2m.setCustomTransformer("bookmark", bookmark);
+  n2m.setCustomTransformer("video", video);
+  n2m.setCustomTransformer("embed", customTransformer_embed);
+  n2m.setCustomTransformer("link_preview", link_preview);
+  n2m.setCustomTransformer("pdf", pdf);
+  n2m.setCustomTransformer("audio", audio);
+  n2m.setCustomTransformer("image", customTransformer_image);
 }
 
 async function sync() {
-    // 获取已发布的文章
-    let pages = await getPages(config.database_id);
-    /**
-     * 需要处理的逻辑:
-     * 1. 对于已发布的文章，如果本地文件存在，且存在abbrlink，则更新notion中的abbrlink
-     * 2. 对于本地存在的文章，如果notion中不是已发布状态，根据设置删除本地文件
-     */
-    // get all the output markdown filename list of the pages, and remove the file not exists in the pages under the output directory
-    // query the filename list from the output directory
-    let notionPagePropList = await Promise.all(
-        pages.map(async (page) => {
-            var properties = await getPropertiesDict(page);
-            switch (properties?.ptype?.toLocaleLowerCase() || "") {
-                case "page":
-                    if (!properties?.filename && !properties?.slug) {
-                        console.error(
-                            `Page ${properties.title} has no filename, the page id will be used as the filename.`,
-                        );
-                        properties.filename = properties.id;
-                    }
-                    properties.filePath = external_path_.join(
-                        config.output_dir.page,
-                        (properties?.filename || properties?.slug).trim(),
-                        "index.md",
-                    );
-                    properties.filename = "index.md";
-                    break;
-                case "post":
-                default:
-                    var filename =
-                        (
-                            properties?.filename ||
-                            properties?.slug ||
-                            properties?.title ||
-                            properties.id
-                        ).trim() + ".md";
-                    // get the filename and directory of the post, if the filename includes /, then it will be treated as a subdirectory
-                    properties.filePath = external_path_.join(
-                        config.output_dir.post,
-                        filename,
-                    );
-                    if (filename.includes("/"))
-                        filename = filename.split("/").pop();
-                    properties.filename = filename;
-            }
-            properties.output_dir = external_path_.dirname(properties.filePath);
-            return properties;
-        }),
-    );
-    console.debug(`${notionPagePropList.length} pages found in notion.`);
-    // make the output directory if it is not exists
-    if (!(0,external_fs_.existsSync)(config.output_dir.post)) {
-        (0,external_fs_.mkdirSync)(config.output_dir.post, { recursive: true });
-    }
-    if (!(0,external_fs_.existsSync)(config.output_dir.page)) {
-        (0,external_fs_.mkdirSync)(config.output_dir.page, { recursive: true });
-    }
-    /**
-     * 1. 删除本地存在，但是Notion中不是已发布状态的文章
-     * 2. 更新notion中已发布的文章的abbrlink
-     *  */
-    // load page properties from the markdown file
-    const localPostFileList = (0,external_fs_.readdirSync)(config.output_dir.post);
-    var deletedPostList = [];
-    for (let i = 0; i < localPostFileList.length; i++) {
-        const localFilename = localPostFileList[i];
-        if (!localFilename.endsWith(".md")) {
-            continue;
-        }
-        var localProp = loadPropertiesAndContentFromMarkdownFile(
-            external_path_.join(config.output_dir.post, localFilename),
-        );
-        if (!localProp) {
-            continue;
-        }
-        var page = pages.find((page) => {
-            return page.id == localProp.id;
-        });
-        var notionProp =
-            notionPagePropList.find((prop) => {
-                return prop.id == localProp.id;
-            }) || null;
-        // const filename = path.parse(localFilename).name;
-        if (
-            config.output_dir?.clean_unpublished_post &&
-            (!page || !notionProp || localFilename !== notionProp?.filename)
-        ) {
-            console.debug(
-                `Page is not exists, delete the local file: ${localFilename}`,
-            );
-            (0,external_fs_.unlinkSync)(external_path_.join(config.output_dir.post, localFilename));
-            deletedPostList.push(localFilename);
-            continue;
-        }
-        // if the page is exists, update the abbrlink of the page if it is empty and the local file has the abbrlink
-        // handle the metas_keeped, to update it
-        if (config.metas_keeped && config.metas_keeped.length > 0) {
-            let keysToUpdate = [];
-            for (let i = 0; i < config.metas_keeped.length; i++) {
-                const key = config.metas_keeped[i];
-                if (
-                    localProp[key] &&
-                    page.properties.hasOwnProperty(key) &&
-                    !notionProp[key]
-                ) {
-                    page.properties[key].rich_text.push({
-                        type: "text",
-                        text: {
-                            content: localProp[key],
-                            link: null,
-                        },
-                        plain_text: localProp[key],
-                        href: null,
-                    });
-                    keysToUpdate.push(key);
-                }
-            }
-            await updatePageProperties(page, keysToUpdate);
-        }
-    }
-
-    /**
-     * 处理需要更新的文章
-     */
-    if (config?.last_sync_datetime && config.last_sync_datetime !== null) {
-        if (!moment_timezone(config?.last_sync_datetime).isValid()) {
+  // 获取已发布的文章
+  let pages = await getPages(config.database_id);
+  /**
+   * 需要处理的逻辑:
+   * 1. 对于已发布的文章，如果本地文件存在，且存在abbrlink，则更新notion中的abbrlink
+   * 2. 对于本地存在的文章，如果notion中不是已发布状态，根据设置删除本地文件
+   */
+  // get all the output markdown filename list of the pages, and remove the file not exists in the pages under the output directory
+  // query the filename list from the output directory
+  let notionPagePropList = await Promise.all(
+    pages.map(async (page) => {
+      var properties = await getPropertiesDict(page);
+      switch (properties?.ptype?.toLocaleLowerCase() || "") {
+        case "page":
+          if (!properties?.filename && !properties?.slug) {
             console.error(
-                `The last_sync_datetime ${config.last_sync_datetime} isn't valid.`,
+              `Page ${properties.title} has no filename, the page id will be used as the filename.`
             );
-        }
-        console.info(
-            `Only sync the pages on or after ${config.last_sync_datetime}`,
-        );
-        notionPagePropList = notionPagePropList.filter(
-            (prop) =>
-                prop[config.status.name] == config.status.published &&
-                moment_timezone(prop.last_edited_time) >
-                    moment_timezone(config.last_sync_datetime),
-        );
+            properties.filename = properties.id;
+          }
+          properties.filePath = external_path_.join(
+            config.output_dir.page,
+            (properties?.filename || properties?.slug).trim(),
+            "index.md"
+          );
+          properties.filename = "index.md";
+          break;
+        case "post":
+        default:
+          var filename =
+            (
+              properties?.filename ||
+              properties?.slug ||
+              properties?.title ||
+              properties.id
+            ).trim() + ".md";
+          // get the filename and directory of the post, if the filename includes /, then it will be treated as a subdirectory
+          properties.filePath = external_path_.join(config.output_dir.post, filename);
+          if (filename.includes("/")) filename = filename.split("/").pop();
+          properties.filename = filename;
+      }
+      properties.output_dir = external_path_.dirname(properties.filePath);
+      return properties;
+    })
+  );
+  console.debug(`${notionPagePropList.length} pages found in notion.`);
+  // make the output directory if it is not exists
+  if (!(0,external_fs_.existsSync)(config.output_dir.post)) {
+    (0,external_fs_.mkdirSync)(config.output_dir.post, { recursive: true });
+  }
+  if (!(0,external_fs_.existsSync)(config.output_dir.page)) {
+    (0,external_fs_.mkdirSync)(config.output_dir.page, { recursive: true });
+  }
+  /**
+   * 1. 删除本地存在，但是Notion中不是已发布状态的文章
+   * 2. 更新notion中已发布的文章的abbrlink
+   *  */
+  // load page properties from the markdown file
+  const localPostFileList = (0,external_fs_.readdirSync)(config.output_dir.post);
+  var deletedPostList = [];
+  for (let i = 0; i < localPostFileList.length; i++) {
+    const localFilename = localPostFileList[i];
+    if (!localFilename.endsWith(".md")) {
+      continue;
     }
-    // deal with notionPagePropList
-    if (notionPagePropList.length == 0) {
-        console.info("No page to deal with.");
-        return {
-            queried: notionPagePropList.length,
-            handled: 0,
-            deleted: deletedPostList.length,
-        };
-    }
-    // 同步处理文章, 提高速度
-    const results = await Promise.all(
-        notionPagePropList.map(async (prop) => {
-            let page = pages.find((page) => page.id == prop.id);
-            console.debug(`Handle page: ${prop.id}, ${prop.title}`);
-            /**
-             * 只处理已发布的文章
-             */
-            // skip the page if it is not exists or published
-            if (!page || prop[config.status.name] !== config.status.published) {
-                console.info(
-                    `Page is not exists or published, skip: ${prop.id}, ${prop.title}`,
-                );
-                return false;
-            }
-            /**
-             * 对于已发布的文章，如果本地文件存在，且存在abbrlink，则更新notion中的abbrlink
-             */
-            // check if the local file exists
-            if (!(0,external_fs_.existsSync)(prop.filePath)) {
-                // the local file is not exists
-                console.info(
-                    `File ${prop.filePath} is not exists, it's a new page.`,
-                );
-            }
-            // check the output directory, if the file is not exists, create it
-            if (!(0,external_fs_.existsSync)(prop.output_dir)) {
-                (0,external_fs_.mkdirSync)(prop.output_dir, { recursive: true });
-            }
-            // update the page status to published
-            if (prop[config.status.name] == config.status.unpublish) {
-                page.properties[config.status.name].select = {
-                    name: config.status.published,
-                };
-            }
-            // get the latest properties of the page
-            const newPageProp = await getPropertiesDict(page);
-            await page2Markdown(page, prop.filePath, newPageProp);
-            console.info(
-                `Page conversion successfully: ${prop.id}, ${prop.title}`,
-            );
-            return true;
-        }),
+    var localProp = loadPropertiesAndContentFromMarkdownFile(
+      external_path_.join(config.output_dir.post, localFilename)
     );
+    if (!localProp) {
+      continue;
+    }
+    var page = pages.find((page) => {
+      return page.id == localProp.id;
+    });
+    var notionProp =
+      notionPagePropList.find((prop) => {
+        return prop.id == localProp.id;
+      }) || null;
+    // const filename = path.parse(localFilename).name;
+    if (
+      config.output_dir?.clean_unpublished_post &&
+      (!page || !notionProp || localFilename !== notionProp?.filename)
+    ) {
+      console.debug(
+        `Page is not exists, delete the local file: ${localFilename}`
+      );
+      (0,external_fs_.unlinkSync)(external_path_.join(config.output_dir.post, localFilename));
+      deletedPostList.push(localFilename);
+      continue;
+    }
+    // if the page is exists, update the abbrlink of the page if it is empty and the local file has the abbrlink
+    // handle the metas_keeped, to update it
+    if (config.metas_keeped && config.metas_keeped.length > 0) {
+      let keysToUpdate = [];
+      for (let i = 0; i < config.metas_keeped.length; i++) {
+        const key = config.metas_keeped[i];
+        if (
+          localProp[key] &&
+          page.properties.hasOwnProperty(key) &&
+          !notionProp[key]
+        ) {
+          page.properties[key].rich_text.push({
+            type: "text",
+            text: {
+              content: localProp[key],
+              link: null,
+            },
+            plain_text: localProp[key],
+            href: null,
+          });
+          keysToUpdate.push(key);
+        }
+      }
+      await updatePageProperties(page, keysToUpdate);
+    }
+  }
+
+  /**
+   * 处理需要更新的文章
+   */
+  if (config?.last_sync_datetime && config.last_sync_datetime !== null) {
+    if (!moment_timezone(config?.last_sync_datetime).isValid()) {
+      console.error(
+        `The last_sync_datetime ${config.last_sync_datetime} isn't valid.`
+      );
+    }
+    console.info(
+      `Only sync the pages on or after ${config.last_sync_datetime}`
+    );
+    notionPagePropList = notionPagePropList.filter(
+      (prop) =>
+        prop[config.status.name] == config.status.published &&
+        moment_timezone(prop.last_edited_time) > moment_timezone(config.last_sync_datetime)
+    );
+  }
+  // deal with notionPagePropList
+  if (notionPagePropList.length == 0) {
+    console.info("No page to deal with.");
     return {
-        queried: notionPagePropList.length,
-        handled: results.filter((r) => r).length,
-        deleted: deletedPostList.length,
+      queried: notionPagePropList.length,
+      handled: 0,
+      deleted: deletedPostList.length,
     };
+  }
+  // 同步处理文章, 提高速度
+  const results = await Promise.all(
+    notionPagePropList.map(async (prop) => {
+      let page = pages.find((page) => page.id == prop.id);
+      console.debug(`Handle page: ${prop.id}, ${prop.title}`);
+      /**
+       * 只处理已发布的文章
+       */
+      // skip the page if it is not exists or published
+      if (!page || prop[config.status.name] !== config.status.published) {
+        console.info(
+          `Page is not exists or published, skip: ${prop.id}, ${prop.title}`
+        );
+        return false;
+      }
+      /**
+       * 对于已发布的文章，如果本地文件存在，且存在abbrlink，则更新notion中的abbrlink
+       */
+      // check if the local file exists
+      if (!(0,external_fs_.existsSync)(prop.filePath)) {
+        // the local file is not exists
+        console.info(`File ${prop.filePath} is not exists, it's a new page.`);
+      }
+      // check the output directory, if the file is not exists, create it
+      if (!(0,external_fs_.existsSync)(prop.output_dir)) {
+        (0,external_fs_.mkdirSync)(prop.output_dir, { recursive: true });
+      }
+      // update the page status to published
+      if (prop[config.status.name] == config.status.unpublish) {
+        page.properties[config.status.name].select = {
+          name: config.status.published,
+        };
+      }
+      // get the latest properties of the page
+      const newPageProp = await getPropertiesDict(page);
+      await page2Markdown(page, prop.filePath, newPageProp);
+      console.info(`Page conversion successfully: ${prop.id}, ${prop.title}`);
+      return true;
+    })
+  );
+  return {
+    queried: notionPagePropList.length,
+    handled: results.filter((r) => r).length,
+    deleted: deletedPostList.length,
+  };
 }
 
 /**
@@ -307679,73 +307674,71 @@ async function sync() {
  */
 
 async function page2Markdown(page, filePath, properties) {
-    const mdblocks = await n2m.pageToMarkdown(page.id);
-    // 转换为markdown
-    let md = n2m.toMarkdownString(mdblocks).parent;
-    // 将图床上传和URL替换放到这里，避免后续对于MD文件的二次处理.
-    if (config.migrate_image) {
-        // 处理内容图片
-        const mdImageReg = /!\[([^[\]]*)\]\(([^)]+)\)/g;
-        const imgItems = md.match(
-            /!\[.*\]\(([^)]+\.(?:jpg|jpeg|png|gif|bmp|svg|webp).*?)\)/g,
-        );
+  const mdblocks = await n2m.pageToMarkdown(page.id);
+  // 转换为markdown
+  let md = n2m.toMarkdownString(mdblocks).parent;
+  // 将图床上传和URL替换放到这里，避免后续对于MD文件的二次处理.
+  if (config.migrate_image) {
+    // 处理内容图片
+    const mdImageReg = /!\[([^[\]]*)\]\(([^)]+)\)/g;
+    const imgItems = md.match(
+      /!\[.*\]\(([^)]+\.(?:jpg|jpeg|png|gif|bmp|svg|webp).*?)\)/g
+    );
 
-        // 收集所有需要处理的 URL（内容图片 + 封面图）
-        const allUrls = [];
-        if (imgItems && imgItems.length > 0) {
-            imgItems.forEach((item) => {
-                const match = /!\[([^[\]]*)\]\(([^)]+)\)/.exec(item);
-                if (match) allUrls.push(match[2]);
-            });
-        }
-        if (properties.cover && properties.cover.startsWith("https://")) {
-            allUrls.push(properties.cover);
-        }
-
-        if (allUrls.length === 0) {
-            console.debug(
-                `No image url found in the markdown file: ${filePath}`,
-            );
-        } else {
-            // 批量上传：并行下载 + 单次提交，避免 PicGo 并发状态竞争
-            console.debug(
-                `Found ${allUrls.length} image(s) to process in: ${filePath}`,
-            );
-            const urlMap = await batchMigrateNotionImages(picgo, allUrls);
-
-            // 替换 markdown 中所有图片 URL
-            if (imgItems && imgItems.length > 0) {
-                imgItems.forEach((item) => {
-                    const match = /!\[([^[\]]*)\]\(([^)]+)\)/.exec(item);
-                    if (!match) return;
-                    const newPicUrl = urlMap.get(match[2]);
-                    if (newPicUrl && newPicUrl !== match[2]) {
-                        md = md.replace(item, `![${match[1]}](${newPicUrl})`);
-                    }
-                });
-            }
-
-            // 替换封面图 URL
-            if (properties.cover && properties.cover.startsWith("https://")) {
-                const newCoverUrl = urlMap.get(properties.cover);
-                if (newCoverUrl) properties.cover = newCoverUrl;
-            }
-        }
+    // 收集所有需要处理的 URL（内容图片 + 封面图）
+    const allUrls = [];
+    if (imgItems && imgItems.length > 0) {
+      imgItems.forEach((item) => {
+        const match = /!\[([^[\]]*)\]\(([^)]+)\)/.exec(item);
+        if (match) allUrls.push(match[2]);
+      });
     }
-    // remove created_time and last_edited_time from properties
-    if (config?.metas_excluded && config.metas_excluded.length) {
-        // delete the key within metas_excluded for properties
-        for (const key of config.metas_excluded) {
-            if (key && key in properties) {
-                delete properties[key];
-            }
-        }
+    if (properties.cover && properties.cover.startsWith("https://")) {
+      allUrls.push(properties.cover);
     }
-    delete properties.created_time;
-    delete properties.last_edited_time;
-    let fm = dist.stringify(properties, { doubleQuotedAsJSON: true });
-    md = (0,prettier.format)(`---\n${fm}---\n\n${md}`, { parser: "markdown" });
-    (0,external_fs_.writeFileSync)(filePath, md);
+
+    if (allUrls.length === 0) {
+      console.debug(`No image url found in the markdown file: ${filePath}`);
+    } else {
+      // 批量上传：并行下载 + 单次提交，避免 PicGo 并发状态竞争
+      console.debug(
+        `Found ${allUrls.length} image(s) to process in: ${filePath}`
+      );
+      const urlMap = await batchMigrateNotionImages(picgo, allUrls);
+
+      // 替换 markdown 中所有图片 URL
+      if (imgItems && imgItems.length > 0) {
+        imgItems.forEach((item) => {
+          const match = /!\[([^[\]]*)\]\(([^)]+)\)/.exec(item);
+          if (!match) return;
+          const newPicUrl = urlMap.get(match[2]);
+          if (newPicUrl && newPicUrl !== match[2]) {
+            md = md.replace(item, `![${match[1]}](${newPicUrl})`);
+          }
+        });
+      }
+
+      // 替换封面图 URL
+      if (properties.cover && properties.cover.startsWith("https://")) {
+        const newCoverUrl = urlMap.get(properties.cover);
+        if (newCoverUrl) properties.cover = newCoverUrl;
+      }
+    }
+  }
+  // remove created_time and last_edited_time from properties
+  if (config?.metas_excluded && config.metas_excluded.length) {
+    // delete the key within metas_excluded for properties
+    for (const key of config.metas_excluded) {
+      if (key && key in properties) {
+        delete properties[key];
+      }
+    }
+  }
+  delete properties.created_time;
+  delete properties.last_edited_time;
+  let fm = dist.stringify(properties, { doubleQuotedAsJSON: true });
+  md = (0,prettier.format)(`---\n${fm}---\n\n${md}`, { parser: "markdown" });
+  (0,external_fs_.writeFileSync)(filePath, md);
 }
 
 /**
@@ -307755,25 +307748,25 @@ async function page2Markdown(page, filePath, properties) {
  * @returns
  */
 async function getPages(database_id) {
-    let filter = {};
-    filter = {
-        property: config.status.name,
-        select: {
-            equals: config.status.published,
-        },
-    };
-    // console.debug('Page filter:', filter);
-    let resp = await notion.databases.query({
-        database_id: database_id,
-        filter: filter,
-        sorts: [
-            {
-                timestamp: "last_edited_time",
-                direction: "ascending",
-            },
-        ],
-    });
-    return resp.results;
+  let filter = {};
+  filter = {
+    property: config.status.name,
+    select: {
+      equals: config.status.published,
+    },
+  };
+  // console.debug('Page filter:', filter);
+  let resp = await notion.databases.query({
+    database_id: database_id,
+    filter: filter,
+    sorts: [
+      {
+        timestamp: "last_edited_time",
+        direction: "ascending",
+      },
+    ],
+  });
+  return resp.results;
 }
 
 /**
@@ -307781,21 +307774,21 @@ async function getPages(database_id) {
  * @param {*} page
  */
 async function updatePageProperties(page, keys = []) {
-    // only update the status property
-    // console.debug('Page full properties updated:', page.properties);
-    if (keys.length == 0) return;
-    let props_updated = {};
-    // update status and abbrlink if exists
-    keys.forEach((key) => {
-        if (page.properties[key]) {
-            props_updated[key] = page.properties[key];
-        }
-    });
-    console.debug(`Page ${page.id} properties updated keys:`, props_updated);
-    await notion.pages.update({
-        page_id: page.id,
-        properties: props_updated,
-    });
+  // only update the status property
+  // console.debug('Page full properties updated:', page.properties);
+  if (keys.length == 0) return;
+  let props_updated = {};
+  // update status and abbrlink if exists
+  keys.forEach((key) => {
+    if (page.properties[key]) {
+      props_updated[key] = page.properties[key];
+    }
+  });
+  console.debug(`Page ${page.id} properties updated keys:`, props_updated);
+  await notion.pages.update({
+    page_id: page.id,
+    properties: props_updated,
+  });
 }
 
 /**
@@ -307805,25 +307798,25 @@ async function updatePageProperties(page, keys = []) {
  */
 
 function loadPropertiesAndContentFromMarkdownFile(filepath) {
-    // load properties from the markdown file
-    // check if the file already exists
-    if (!(0,external_fs_.existsSync)(filepath)) {
-        console.debug("File does not exist:", filepath);
-        return null;
-    }
-    const content = (0,external_fs_.readFileSync)(filepath, "utf8");
-    // math the front matter
-    const fm = content.match(/---\n([\s\S]*?)\n---/);
-    // parse the front matter
-    if (!fm) return null;
-    try {
-        let properties = dist.parse(fm[1]);
-        properties.filename = external_path_.parse(filepath).name;
-        return properties;
-    } catch (e) {
-        console.debug("Parse yaml error:", e);
-        return null;
-    }
+  // load properties from the markdown file
+  // check if the file already exists
+  if (!(0,external_fs_.existsSync)(filepath)) {
+    console.debug("File does not exist:", filepath);
+    return null;
+  }
+  const content = (0,external_fs_.readFileSync)(filepath, "utf8");
+  // math the front matter
+  const fm = content.match(/---\n([\s\S]*?)\n---/);
+  // parse the front matter
+  if (!fm) return null;
+  try {
+    let properties = dist.parse(fm[1]);
+    properties.filename = external_path_.parse(filepath).name;
+    return properties;
+  } catch (e) {
+    console.debug("Parse yaml error:", e);
+    return null;
+  }
 }
 
 /**
@@ -307832,26 +307825,26 @@ function loadPropertiesAndContentFromMarkdownFile(filepath) {
  * @returns {Object}
  */
 async function getPropertiesDict(page) {
-    if (!page) return {};
-    let data = {};
-    for (const key in page.properties) {
-        const value = getPropVal(page.properties[key]);
-        if (value == undefined || value == "") continue;
-        data[key] = value;
+  if (!page) return {};
+  let data = {};
+  for (const key in page.properties) {
+    const value = getPropVal(page.properties[key]);
+    if (value == undefined || value == "") continue;
+    data[key] = value;
+  }
+  // cover image
+  if (page.cover) {
+    if (page.cover.type === "external") {
+      data["cover"] = page.cover.external.url;
+    } else if (page.cover.type === "file") {
+      data["cover"] = page.cover.file.url;
     }
-    // cover image
-    if (page.cover) {
-        if (page.cover.type === "external") {
-            data["cover"] = page.cover.external.url;
-        } else if (page.cover.type === "file") {
-            data["cover"] = page.cover.file.url;
-        }
-    }
-    // id, created, updated time
-    data["id"] = page.id;
-    data["created_time"] = page.created_time;
-    data["last_edited_time"] = page.last_edited_time;
-    return data;
+  }
+  // id, created, updated time
+  data["id"] = page.id;
+  data["created_time"] = page.created_time;
+  data["last_edited_time"] = page.last_edited_time;
+  return data;
 }
 
 // /**
@@ -307859,75 +307852,75 @@ async function getPropertiesDict(page) {
 //  * @param {ListBlockChildrenResponseResult} block
 //  */
 function callout(n2m) {
-    return async (block) => {
-        let callout_str = block.callout.text.map((a) => a.plain_text).join("");
-        if (!block.has_children) {
-            return callout2md(callout_str, block.callout.icon);
-        }
+  return async (block) => {
+    let callout_str = block.callout.text.map((a) => a.plain_text).join("");
+    if (!block.has_children) {
+      return callout2md(callout_str, block.callout.icon);
+    }
 
-        const callout_children_object = await getBlockChildren(
-            n2m.notionClient,
-            block.id,
-            100,
-        );
-        // parse children blocks to md object
-        const callout_children = await n2m.blocksToMarkdown(
-            callout_children_object,
-        );
+    const callout_children_object = await getBlockChildren(
+      n2m.notionClient,
+      block.id,
+      100
+    );
+    // parse children blocks to md object
+    const callout_children = await n2m.blocksToMarkdown(
+      callout_children_object
+    );
 
-        callout_str +=
-            "\n" + callout_children.map((child) => child.parent).join("\n\n");
+    callout_str +=
+      "\n" + callout_children.map((child) => child.parent).join("\n\n");
 
-        return callout2md(callout_str.trim(), block.callout.icon);
-    };
+    return callout2md(callout_str.trim(), block.callout.icon);
+  };
 }
 
 function callout2md(str, icon) {
-    return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
+  return `<aside>\n${icon2md(icon)}${str}\n</aside>`.trim();
 }
 
 function icon2md(icon) {
-    switch (icon.type) {
-        case "emoji":
-            return parse(icon.emoji);
-        case "external":
-            return `<img src="${icon.external.url}" width="25px" />\n`;
-    }
-    return "";
+  switch (icon.type) {
+    case "emoji":
+      return parse(icon.emoji);
+    case "external":
+      return `<img src="${icon.external.url}" width="25px" />\n`;
+  }
+  return "";
 }
 
 function getPropVal(data) {
-    let val = data[data.type];
-    if (!val) return undefined;
-    switch (data.type) {
-        case "multi_select":
-            return val.map((a) => a.name);
-        case "select":
-            return val.name;
-        case "date":
-            var mt = moment_timezone(val.start);
-            if (!mt.isValid()) return val.start;
-            return config?.timezone
-                ? mt.tz(config.timezone).format("YYYY-MM-DD HH:mm:ss")
-                : mt.format();
-        case "rich_text":
-        case "title":
-            return val.map((a) => a.plain_text).join("");
-        case "text":
-            return data.plain_text;
-        case "files":
-            if (val.length < 1) return "";
-            return val[0][val[0].type].url;
-        case "created_time":
-        case "last_edited_time":
-            var mt = moment_timezone(val);
-            if (!mt.isValid()) return val;
-            return config?.timezone
-                ? mt.tz(config.timezone).format("YYYY-MM-DD HH:mm:ss")
-                : mt.format();
-        default:
-            return "";
-    }
+  let val = data[data.type];
+  if (!val) return undefined;
+  switch (data.type) {
+    case "multi_select":
+      return val.map((a) => a.name);
+    case "select":
+      return val.name;
+    case "date":
+      var mt = moment_timezone(val.start);
+      if (!mt.isValid()) return val.start;
+      return config?.timezone
+        ? mt.tz(config.timezone).format("YYYY-MM-DD HH:mm:ss")
+        : mt.format();
+    case "rich_text":
+    case "title":
+      return val.map((a) => a.plain_text).join("");
+    case "text":
+      return data.plain_text;
+    case "files":
+      if (val.length < 1) return "";
+      return val[0][val[0].type].url;
+    case "created_time":
+    case "last_edited_time":
+      var mt = moment_timezone(val);
+      if (!mt.isValid()) return val;
+      return config?.timezone
+        ? mt.tz(config.timezone).format("YYYY-MM-DD HH:mm:ss")
+        : mt.format();
+    default:
+      return "";
+  }
 }
 
 
@@ -307935,6 +307928,7 @@ function getPropVal(data) {
 // EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
 var core = __nccwpck_require__(37484);
 ;// CONCATENATED MODULE: ./src/index.js
+<<<<<<< HEAD
 /*
  * @Author: Dorad, ddxi@qq.com
  * @Date: 2023-09-02 10:54:25 +08:00
@@ -308027,4 +308021,122 @@ try {
   core.endGroup('Notion2markdown-action');
   core.notice(`Notion2markdown-action finished, queried: ${out.queried}, handled: ${out.handled} and deleted: ${out.deleted}`)
 })();
+=======
+/*
+ * @Author: Dorad, ddxi@qq.com
+ * @Date: 2023-09-02 10:54:25 +08:00
+ * @LastEditors: Dorad, ddxi@qq.com
+ * @LastEditTime: 2023-09-03 22:29:17 +08:00
+ * @FilePath: \src\index.js
+ * @Description:
+ *
+ * Copyright (c) 2023 by Dorad (ddxi@qq.com), All Rights Reserved.
+ */
+
+
+
+// Polyfill __filename and __dirname for CJS modules bundled by ncc into an ESM output.
+// ESM does not expose these globals, but some bundled packages (e.g. write-file-atomic via picgo) depend on them.
+if (typeof globalThis.__filename === "undefined") {
+  globalThis.__filename = (0,external_url_.fileURLToPath)(import.meta.url);
+}
+if (typeof globalThis.__dirname === "undefined") {
+  globalThis.__dirname = (0,external_path_.dirname)(globalThis.__filename);
+}
+
+
+
+
+function isJson(str) {
+  try {
+    const obj = JSON.parse(str);
+    if (obj && typeof obj == "object") return true;
+  } catch (e) {}
+  return false;
+}
+
+var migrate_image = core.getInput("pic_migrate") === "true" || false;
+const picBedConfigStr = core.getInput("pic_bed_config") || "{}";
+
+// test the picBed config
+if (!isJson(picBedConfigStr)) {
+  core.warning(
+    "pic_bed_config is not a valid json string, use default config: {}, and set migrate_image to false."
+  );
+  migrate_image = false;
+}
+
+var pic_bed_config = {};
+
+if (migrate_image) {
+  core.info("migrate_image is true, use pic_bed_config to upload images.");
+  pic_bed_config = JSON.parse(picBedConfigStr);
+}
+
+var metas_keeped = core.getInput("metas_keeped");
+if (metas_keeped && metas_keeped.trim().length > 0) {
+  metas_keeped = metas_keeped.split(",").map((key) => key.trim());
+}
+
+var metas_excluded = core.getInput("metas_excluded") || [];
+if (metas_excluded) {
+  metas_excluded =
+    metas_excluded
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v) || [];
+}
+
+let src_config = {
+  notion_secret: core.getInput("notion_secret"),
+  database_id: core.getInput("database_id"),
+  migrate_image: migrate_image || false,
+  picBed: pic_bed_config || {},
+  pic_compress: core.getInput("pic_compress") === "true" || false,
+  status: {
+    name: core.getInput("status_name") || "status",
+    published: core.getInput("status_published") || "已发布",
+  },
+  output_dir: {
+    page: core.getInput("output_page_dir") || "source/",
+    post: core.getInput("output_post_dir") || "source/_posts/notion/",
+    clean_unpublished_post:
+      core.getInput("clean_unpublished_post") === "true" || false,
+  },
+  metas_keeped: metas_keeped,
+  last_sync_datetime: core.getInput("last_sync_datetime") || null,
+  metas_excluded: metas_excluded || [],
+  timezone: core.getInput("timezone") || "",
+};
+
+// add current running file dir to PATH
+process.env.PATH = __dirname + ":" + process.env.PATH;
+// add all the exec file under __dirname/vendor* dirs the executable permission expect the source dir
+const { execSync } = require("child_process");
+const { url } = require("inspector");
+const { BADFAMILY } = require("dns");
+// try to find all the files under __dirname/vendor* dirs and set the executable permission
+try {
+  execSync(
+    `find ${__dirname}/vendor* -type f -not -name "*.tar.gz" -exec chmod +x {} \\;`
+  );
+} catch (e) {
+  core.error(
+    `Failed to set the executable permission for all the files under ${__dirname}/vendor* dirs, error: ${e}`
+  );
+}
+
+(async function () {
+  core.startGroup("Notion2markdown-action");
+  init(src_config);
+  // get output
+  const out = await sync();
+  // set output
+  core.setOutput("updated_count", out.handled + out.deleted);
+  core.endGroup("Notion2markdown-action");
+  core.notice(
+    `Notion2markdown-action finished, queried: ${out.queried}, handled: ${out.handled} and deleted: ${out.deleted}`
+  );
+})();
+>>>>>>> 7d87885 (重新打包)
 
