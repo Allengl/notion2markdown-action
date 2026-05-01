@@ -86134,7 +86134,7 @@ module.exports = new BinWrapper()
 	.src(`${url}freebsd/x64/gifsicle`, 'freebsd', 'x64')
 	.src(`${url}win/x86/gifsicle.exe`, 'win32', 'x86')
 	.src(`${url}win/x64/gifsicle.exe`, 'win32', 'x64')
-	.dest(__nccwpck_require__.ab + "vendor")
+	.dest(__nccwpck_require__.ab + "vendor2")
 	.use(process.platform === 'win32' ? 'gifsicle.exe' : 'gifsicle');
 
 
@@ -287304,7 +287304,7 @@ var bin_wrapper = __nccwpck_require__(27791);
 
 
 
-const package_ = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package.json"));
+const package_ = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package1.json"));
 const url = `https://raw.githubusercontent.com/imagemin/pngquant-bin/v${package_.version}/vendor/`;
 
 const binaryWrapper = new bin_wrapper()
@@ -296466,7 +296466,7 @@ const {
 
 
 
-const pkg = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package1.json"));
+const pkg = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package.json"));
 const lib_url = `https://raw.githubusercontent.com/imagemin/jpegtran-bin/v${pkg.version}/vendor/`;
 
 const binWrapper = new bin_wrapper()
@@ -296481,7 +296481,7 @@ const binWrapper = new bin_wrapper()
 	.src(`${lib_url}win/x64/jpegtran.exe`, 'win32', 'x64')
 	.src(`${lib_url}win/x86/libjpeg-62.dll`, 'win32', 'x86')
 	.src(`${lib_url}win/x64/libjpeg-62.dll`, 'win32', 'x64')
-	.dest((0,external_node_url_.fileURLToPath)(__nccwpck_require__.ab + "vendor2"))
+	.dest((0,external_node_url_.fileURLToPath)(__nccwpck_require__.ab + "vendor"))
 	.use(external_node_process_namespaceObject.platform === 'win32' ? 'jpegtran.exe' : 'jpegtran');
 
 /* harmony default export */ const jpegtran_bin_lib = (binWrapper);
