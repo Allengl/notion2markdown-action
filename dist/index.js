@@ -72207,6 +72207,1509 @@ return /******/ (function(modules) { // webpackBootstrap
 
 /***/ }),
 
+/***/ 48118:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const fs = __nccwpck_require__(79896);
+const execa = __nccwpck_require__(28366);
+const pFinally = __nccwpck_require__(32766);
+const pify = __nccwpck_require__(56552);
+const rimraf = __nccwpck_require__(26386);
+const tempfile = __nccwpck_require__(64180);
+
+const fsP = pify(fs);
+const rmP = pify(rimraf);
+const input = Symbol('inputPath');
+const output = Symbol('outputPath');
+
+module.exports = opts => {
+	opts = Object.assign({}, opts);
+
+	if (!Buffer.isBuffer(opts.input)) {
+		return Promise.reject(new Error('Input is required'));
+	}
+
+	if (typeof opts.bin !== 'string') {
+		return Promise.reject(new Error('Binary is required'));
+	}
+
+	if (!Array.isArray(opts.args)) {
+		return Promise.reject(new Error('Arguments are required'));
+	}
+
+	const inputPath = opts.inputPath || tempfile();
+	const outputPath = opts.outputPath || tempfile();
+
+	opts.args = opts.args.map(x => x === input ? inputPath : x === output ? outputPath : x);
+
+	const promise = fsP.writeFile(inputPath, opts.input)
+		.then(() => execa(opts.bin, opts.args))
+		.then(() => fsP.readFile(outputPath));
+
+	return pFinally(promise, () => Promise.all([
+		rmP(inputPath),
+		rmP(outputPath)
+	]));
+};
+
+module.exports.input = input;
+module.exports.output = output;
+
+
+/***/ }),
+
+/***/ 12192:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var cp = __nccwpck_require__(35317);
+var parse = __nccwpck_require__(8191);
+var enoent = __nccwpck_require__(48399);
+
+var cpSpawnSync = cp.spawnSync;
+
+function spawn(command, args, options) {
+    var parsed;
+    var spawned;
+
+    // Parse the arguments
+    parsed = parse(command, args, options);
+
+    // Spawn the child process
+    spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
+
+    // Hook into child process "exit" event to emit an error if the command
+    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    enoent.hookChildProcess(spawned, parsed);
+
+    return spawned;
+}
+
+function spawnSync(command, args, options) {
+    var parsed;
+    var result;
+
+    if (!cpSpawnSync) {
+        try {
+            cpSpawnSync = __nccwpck_require__(20050);  // eslint-disable-line global-require
+        } catch (ex) {
+            throw new Error(
+                'In order to use spawnSync on node 0.10 or older, you must ' +
+                'install spawn-sync:\n\n' +
+                '  npm install spawn-sync --save'
+            );
+        }
+    }
+
+    // Parse the arguments
+    parsed = parse(command, args, options);
+
+    // Spawn the child process
+    result = cpSpawnSync(parsed.command, parsed.args, parsed.options);
+
+    // Analyze if the command does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
+
+    return result;
+}
+
+module.exports = spawn;
+module.exports.spawn = spawn;
+module.exports.sync = spawnSync;
+
+module.exports._parse = parse;
+module.exports._enoent = enoent;
+
+
+/***/ }),
+
+/***/ 48399:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var isWin = process.platform === 'win32';
+var resolveCommand = __nccwpck_require__(35316);
+
+var isNode10 = process.version.indexOf('v0.10.') === 0;
+
+function notFoundError(command, syscall) {
+    var err;
+
+    err = new Error(syscall + ' ' + command + ' ENOENT');
+    err.code = err.errno = 'ENOENT';
+    err.syscall = syscall + ' ' + command;
+
+    return err;
+}
+
+function hookChildProcess(cp, parsed) {
+    var originalEmit;
+
+    if (!isWin) {
+        return;
+    }
+
+    originalEmit = cp.emit;
+    cp.emit = function (name, arg1) {
+        var err;
+
+        // If emitting "exit" event and exit code is 1, we need to check if
+        // the command exists and emit an "error" instead
+        // See: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+        if (name === 'exit') {
+            err = verifyENOENT(arg1, parsed, 'spawn');
+
+            if (err) {
+                return originalEmit.call(cp, 'error', err);
+            }
+        }
+
+        return originalEmit.apply(cp, arguments);
+    };
+}
+
+function verifyENOENT(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawn');
+    }
+
+    return null;
+}
+
+function verifyENOENTSync(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawnSync');
+    }
+
+    // If we are in node 10, then we are using spawn-sync; if it exited
+    // with -1 it probably means that the command does not exist
+    if (isNode10 && status === -1) {
+        parsed.file = isWin ? parsed.file : resolveCommand(parsed.original);
+
+        if (!parsed.file) {
+            return notFoundError(parsed.original, 'spawnSync');
+        }
+    }
+
+    return null;
+}
+
+module.exports.hookChildProcess = hookChildProcess;
+module.exports.verifyENOENT = verifyENOENT;
+module.exports.verifyENOENTSync = verifyENOENTSync;
+module.exports.notFoundError = notFoundError;
+
+
+/***/ }),
+
+/***/ 8191:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var resolveCommand = __nccwpck_require__(35316);
+var hasEmptyArgumentBug = __nccwpck_require__(49669);
+var escapeArgument = __nccwpck_require__(98285);
+var escapeCommand = __nccwpck_require__(44065);
+var readShebang = __nccwpck_require__(81805);
+
+var isWin = process.platform === 'win32';
+var skipShellRegExp = /\.(?:com|exe)$/i;
+
+// Supported in Node >= 6 and >= 4.8
+var supportsShellOption = parseInt(process.version.substr(1).split('.')[0], 10) >= 6 ||
+ parseInt(process.version.substr(1).split('.')[0], 10) === 4 && parseInt(process.version.substr(1).split('.')[1], 10) >= 8;
+
+function parseNonShell(parsed) {
+    var shebang;
+    var needsShell;
+    var applyQuotes;
+
+    if (!isWin) {
+        return parsed;
+    }
+
+    // Detect & add support for shebangs
+    parsed.file = resolveCommand(parsed.command);
+    parsed.file = parsed.file || resolveCommand(parsed.command, true);
+    shebang = parsed.file && readShebang(parsed.file);
+
+    if (shebang) {
+        parsed.args.unshift(parsed.file);
+        parsed.command = shebang;
+        needsShell = hasEmptyArgumentBug || !skipShellRegExp.test(resolveCommand(shebang) || resolveCommand(shebang, true));
+    } else {
+        needsShell = hasEmptyArgumentBug || !skipShellRegExp.test(parsed.file);
+    }
+
+    // If a shell is required, use cmd.exe and take care of escaping everything correctly
+    if (needsShell) {
+        // Escape command & arguments
+        applyQuotes = (parsed.command !== 'echo');  // Do not quote arguments for the special "echo" command
+        parsed.command = escapeCommand(parsed.command);
+        parsed.args = parsed.args.map(function (arg) {
+            return escapeArgument(arg, applyQuotes);
+        });
+
+        // Make use of cmd.exe
+        parsed.args = ['/d', '/s', '/c', '"' + parsed.command + (parsed.args.length ? ' ' + parsed.args.join(' ') : '') + '"'];
+        parsed.command = process.env.comspec || 'cmd.exe';
+        parsed.options.windowsVerbatimArguments = true;  // Tell node's spawn that the arguments are already escaped
+    }
+
+    return parsed;
+}
+
+function parseShell(parsed) {
+    var shellCommand;
+
+    // If node supports the shell option, there's no need to mimic its behavior
+    if (supportsShellOption) {
+        return parsed;
+    }
+
+    // Mimic node shell option, see: https://github.com/nodejs/node/blob/b9f6a2dc059a1062776133f3d4fd848c4da7d150/lib/child_process.js#L335
+    shellCommand = [parsed.command].concat(parsed.args).join(' ');
+
+    if (isWin) {
+        parsed.command = typeof parsed.options.shell === 'string' ? parsed.options.shell : process.env.comspec || 'cmd.exe';
+        parsed.args = ['/d', '/s', '/c', '"' + shellCommand + '"'];
+        parsed.options.windowsVerbatimArguments = true;  // Tell node's spawn that the arguments are already escaped
+    } else {
+        if (typeof parsed.options.shell === 'string') {
+            parsed.command = parsed.options.shell;
+        } else if (process.platform === 'android') {
+            parsed.command = '/system/bin/sh';
+        } else {
+            parsed.command = '/bin/sh';
+        }
+
+        parsed.args = ['-c', shellCommand];
+    }
+
+    return parsed;
+}
+
+// ------------------------------------------------
+
+function parse(command, args, options) {
+    var parsed;
+
+    // Normalize arguments, similar to nodejs
+    if (args && !Array.isArray(args)) {
+        options = args;
+        args = null;
+    }
+
+    args = args ? args.slice(0) : [];  // Clone array to avoid changing the original
+    options = options || {};
+
+    // Build our parsed object
+    parsed = {
+        command: command,
+        args: args,
+        options: options,
+        file: undefined,
+        original: command,
+    };
+
+    // Delegate further parsing to shell or non-shell
+    return options.shell ? parseShell(parsed) : parseNonShell(parsed);
+}
+
+module.exports = parse;
+
+
+/***/ }),
+
+/***/ 98285:
+/***/ ((module) => {
+
+
+
+function escapeArgument(arg, quote) {
+    // Convert to string
+    arg = '' + arg;
+
+    // If we are not going to quote the argument,
+    // escape shell metacharacters, including double and single quotes:
+    if (!quote) {
+        arg = arg.replace(/([()%!^<>&|;,"'\s])/g, '^$1');
+    } else {
+        // Sequence of backslashes followed by a double quote:
+        // double up all the backslashes and escape the double quote
+        arg = arg.replace(/(\\*)"/g, '$1$1\\"');
+
+        // Sequence of backslashes followed by the end of the string
+        // (which will become a double quote later):
+        // double up all the backslashes
+        arg = arg.replace(/(\\*)$/, '$1$1');
+
+        // All other backslashes occur literally
+
+        // Quote the whole thing:
+        arg = '"' + arg + '"';
+    }
+
+    return arg;
+}
+
+module.exports = escapeArgument;
+
+
+/***/ }),
+
+/***/ 44065:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var escapeArgument = __nccwpck_require__(98285);
+
+function escapeCommand(command) {
+    // Do not escape if this command is not dangerous..
+    // We do this so that commands like "echo" or "ifconfig" work
+    // Quoting them, will make them unaccessible
+    return /^[a-z0-9_-]+$/i.test(command) ? command : escapeArgument(command, true);
+}
+
+module.exports = escapeCommand;
+
+
+/***/ }),
+
+/***/ 49669:
+/***/ ((module) => {
+
+
+
+// See: https://github.com/IndigoUnited/node-cross-spawn/pull/34#issuecomment-221623455
+function hasEmptyArgumentBug() {
+    var nodeVer;
+
+    if (process.platform !== 'win32') {
+        return false;
+    }
+
+    nodeVer = process.version.substr(1).split('.').map(function (num) {
+        return parseInt(num, 10);
+    });
+
+    return (nodeVer[0] === 0 && nodeVer[1] < 12);
+}
+
+module.exports = hasEmptyArgumentBug();
+
+
+/***/ }),
+
+/***/ 81805:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var fs = __nccwpck_require__(79896);
+var LRU = __nccwpck_require__(42762);
+var shebangCommand = __nccwpck_require__(79152);
+
+var shebangCache = new LRU({ max: 50, maxAge: 30 * 1000 });  // Cache just for 30sec
+
+function readShebang(command) {
+    var buffer;
+    var fd;
+    var shebang;
+
+    // Check if it is in the cache first
+    if (shebangCache.has(command)) {
+        return shebangCache.get(command);
+    }
+
+    // Read the first 150 bytes from the file
+    buffer = new Buffer(150);
+
+    try {
+        fd = fs.openSync(command, 'r');
+        fs.readSync(fd, buffer, 0, 150, 0);
+        fs.closeSync(fd);
+    } catch (e) { /* empty */ }
+
+    // Attempt to extract shebang (null is returned if not a shebang)
+    shebang = shebangCommand(buffer.toString());
+
+    // Store the shebang in the cache
+    shebangCache.set(command, shebang);
+
+    return shebang;
+}
+
+module.exports = readShebang;
+
+
+/***/ }),
+
+/***/ 35316:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+var path = __nccwpck_require__(16928);
+var which = __nccwpck_require__(26848);
+var LRU = __nccwpck_require__(42762);
+
+var commandCache = new LRU({ max: 50, maxAge: 30 * 1000 });  // Cache just for 30sec
+
+function resolveCommand(command, noExtension) {
+    var resolved;
+
+    noExtension = !!noExtension;
+    resolved = commandCache.get(command + '!' + noExtension);
+
+    // Check if its resolved in the cache
+    if (commandCache.has(command)) {
+        return commandCache.get(command);
+    }
+
+    try {
+        resolved = !noExtension ?
+            which.sync(command) :
+            which.sync(command, { pathExt: path.delimiter + (process.env.PATHEXT || '') });
+    } catch (e) { /* empty */ }
+
+    commandCache.set(command + '!' + noExtension, resolved);
+
+    return resolved;
+}
+
+module.exports = resolveCommand;
+
+
+/***/ }),
+
+/***/ 28366:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const childProcess = __nccwpck_require__(35317);
+const util = __nccwpck_require__(39023);
+const crossSpawn = __nccwpck_require__(12192);
+const stripEof = __nccwpck_require__(87017);
+const npmRunPath = __nccwpck_require__(36883);
+const isStream = __nccwpck_require__(93065);
+const _getStream = __nccwpck_require__(6833);
+const pFinally = __nccwpck_require__(32766);
+const onExit = __nccwpck_require__(66627);
+const errname = __nccwpck_require__(50686);
+const stdio = __nccwpck_require__(38875);
+
+const TEN_MEGABYTES = 1000 * 1000 * 10;
+
+function handleArgs(cmd, args, opts) {
+	let parsed;
+
+	if (opts && opts.env && opts.extendEnv !== false) {
+		opts.env = Object.assign({}, process.env, opts.env);
+	}
+
+	if (opts && opts.__winShell === true) {
+		delete opts.__winShell;
+		parsed = {
+			command: cmd,
+			args,
+			options: opts,
+			file: cmd,
+			original: cmd
+		};
+	} else {
+		parsed = crossSpawn._parse(cmd, args, opts);
+	}
+
+	opts = Object.assign({
+		maxBuffer: TEN_MEGABYTES,
+		stripEof: true,
+		preferLocal: true,
+		localDir: parsed.options.cwd || process.cwd(),
+		encoding: 'utf8',
+		reject: true,
+		cleanup: true
+	}, parsed.options);
+
+	opts.stdio = stdio(opts);
+
+	if (opts.preferLocal) {
+		opts.env = npmRunPath.env(Object.assign({}, opts, {cwd: opts.localDir}));
+	}
+
+	return {
+		cmd: parsed.command,
+		args: parsed.args,
+		opts,
+		parsed
+	};
+}
+
+function handleInput(spawned, opts) {
+	const input = opts.input;
+
+	if (input === null || input === undefined) {
+		return;
+	}
+
+	if (isStream(input)) {
+		input.pipe(spawned.stdin);
+	} else {
+		spawned.stdin.end(input);
+	}
+}
+
+function handleOutput(opts, val) {
+	if (val && opts.stripEof) {
+		val = stripEof(val);
+	}
+
+	return val;
+}
+
+function handleShell(fn, cmd, opts) {
+	let file = '/bin/sh';
+	let args = ['-c', cmd];
+
+	opts = Object.assign({}, opts);
+
+	if (process.platform === 'win32') {
+		opts.__winShell = true;
+		file = process.env.comspec || 'cmd.exe';
+		args = ['/s', '/c', `"${cmd}"`];
+		opts.windowsVerbatimArguments = true;
+	}
+
+	if (opts.shell) {
+		file = opts.shell;
+		delete opts.shell;
+	}
+
+	return fn(file, args, opts);
+}
+
+function getStream(process, stream, encoding, maxBuffer) {
+	if (!process[stream]) {
+		return null;
+	}
+
+	let ret;
+
+	if (encoding) {
+		ret = _getStream(process[stream], {
+			encoding,
+			maxBuffer
+		});
+	} else {
+		ret = _getStream.buffer(process[stream], {maxBuffer});
+	}
+
+	return ret.catch(err => {
+		err.stream = stream;
+		err.message = `${stream} ${err.message}`;
+		throw err;
+	});
+}
+
+module.exports = (cmd, args, opts) => {
+	let joinedCmd = cmd;
+
+	if (Array.isArray(args) && args.length > 0) {
+		joinedCmd += ' ' + args.join(' ');
+	}
+
+	const parsed = handleArgs(cmd, args, opts);
+	const encoding = parsed.opts.encoding;
+	const maxBuffer = parsed.opts.maxBuffer;
+
+	let spawned;
+	try {
+		spawned = childProcess.spawn(parsed.cmd, parsed.args, parsed.opts);
+	} catch (err) {
+		return Promise.reject(err);
+	}
+
+	let removeExitHandler;
+	if (parsed.opts.cleanup) {
+		removeExitHandler = onExit(() => {
+			spawned.kill();
+		});
+	}
+
+	let timeoutId = null;
+	let timedOut = false;
+
+	const cleanupTimeout = () => {
+		if (timeoutId) {
+			clearTimeout(timeoutId);
+			timeoutId = null;
+		}
+	};
+
+	if (parsed.opts.timeout > 0) {
+		timeoutId = setTimeout(() => {
+			timeoutId = null;
+			timedOut = true;
+			spawned.kill(parsed.opts.killSignal);
+		}, parsed.opts.timeout);
+	}
+
+	const processDone = new Promise(resolve => {
+		spawned.on('exit', (code, signal) => {
+			cleanupTimeout();
+			resolve({code, signal});
+		});
+
+		spawned.on('error', err => {
+			cleanupTimeout();
+			resolve({err});
+		});
+
+		if (spawned.stdin) {
+			spawned.stdin.on('error', err => {
+				cleanupTimeout();
+				resolve({err});
+			});
+		}
+	});
+
+	function destroy() {
+		if (spawned.stdout) {
+			spawned.stdout.destroy();
+		}
+
+		if (spawned.stderr) {
+			spawned.stderr.destroy();
+		}
+	}
+
+	const promise = pFinally(Promise.all([
+		processDone,
+		getStream(spawned, 'stdout', encoding, maxBuffer),
+		getStream(spawned, 'stderr', encoding, maxBuffer)
+	]).then(arr => {
+		const result = arr[0];
+		const stdout = arr[1];
+		const stderr = arr[2];
+
+		let err = result.err;
+		const code = result.code;
+		const signal = result.signal;
+
+		if (removeExitHandler) {
+			removeExitHandler();
+		}
+
+		if (err || code !== 0 || signal !== null) {
+			if (!err) {
+				let output = '';
+
+				if (Array.isArray(parsed.opts.stdio)) {
+					if (parsed.opts.stdio[2] !== 'inherit') {
+						output += output.length > 0 ? stderr : `\n${stderr}`;
+					}
+
+					if (parsed.opts.stdio[1] !== 'inherit') {
+						output += `\n${stdout}`;
+					}
+				} else if (parsed.opts.stdio !== 'inherit') {
+					output = `\n${stderr}${stdout}`;
+				}
+
+				err = new Error(`Command failed: ${joinedCmd}${output}`);
+				err.code = code < 0 ? errname(code) : code;
+			}
+
+			// TODO: missing some timeout logic for killed
+			// https://github.com/nodejs/node/blob/master/lib/child_process.js#L203
+			// err.killed = spawned.killed || killed;
+			err.killed = err.killed || spawned.killed;
+
+			err.stdout = stdout;
+			err.stderr = stderr;
+			err.failed = true;
+			err.signal = signal || null;
+			err.cmd = joinedCmd;
+			err.timedOut = timedOut;
+
+			if (!parsed.opts.reject) {
+				return err;
+			}
+
+			throw err;
+		}
+
+		return {
+			stdout: handleOutput(parsed.opts, stdout),
+			stderr: handleOutput(parsed.opts, stderr),
+			code: 0,
+			failed: false,
+			killed: false,
+			signal: null,
+			cmd: joinedCmd,
+			timedOut: false
+		};
+	}), destroy);
+
+	crossSpawn._enoent.hookChildProcess(spawned, parsed.parsed);
+
+	handleInput(spawned, parsed.opts);
+
+	spawned.then = promise.then.bind(promise);
+	spawned.catch = promise.catch.bind(promise);
+
+	return spawned;
+};
+
+module.exports.stdout = function () {
+	// TODO: set `stderr: 'ignore'` when that option is implemented
+	return module.exports.apply(null, arguments).then(x => x.stdout);
+};
+
+module.exports.stderr = function () {
+	// TODO: set `stdout: 'ignore'` when that option is implemented
+	return module.exports.apply(null, arguments).then(x => x.stderr);
+};
+
+module.exports.shell = (cmd, opts) => handleShell(module.exports, cmd, opts);
+
+module.exports.sync = (cmd, args, opts) => {
+	const parsed = handleArgs(cmd, args, opts);
+
+	if (isStream(parsed.opts.input)) {
+		throw new TypeError('The `input` option cannot be a stream in sync mode');
+	}
+
+	const result = childProcess.spawnSync(parsed.cmd, parsed.args, parsed.opts);
+
+	if (result.error || result.status !== 0) {
+		throw (result.error || new Error(result.stderr === '' ? result.stdout : result.stderr));
+	}
+
+	result.stdout = handleOutput(parsed.opts, result.stdout);
+	result.stderr = handleOutput(parsed.opts, result.stderr);
+
+	return result;
+};
+
+module.exports.shellSync = (cmd, opts) => handleShell(module.exports.sync, cmd, opts);
+
+module.exports.spawn = util.deprecate(module.exports, 'execa.spawn() is deprecated. Use execa() instead.');
+
+
+/***/ }),
+
+/***/ 50686:
+/***/ ((module) => {
+
+
+// The Node team wants to deprecate `process.bind(...)`.
+//   https://github.com/nodejs/node/pull/2768
+//
+// However, we need the 'uv' binding for errname support.
+// This is a defensive wrapper around it so `execa` will not fail entirely if it stops working someday.
+//
+// If this ever stops working. See: https://github.com/sindresorhus/execa/issues/31#issuecomment-215939939 for another possible solution.
+let uv;
+
+try {
+	uv = process.binding('uv');
+
+	if (typeof uv.errname !== 'function') {
+		throw new TypeError('uv.errname is not a function');
+	}
+} catch (err) {
+	console.error('execa/lib/errname: unable to establish process.binding(\'uv\')', err);
+	uv = null;
+}
+
+function errname(uv, code) {
+	if (uv) {
+		return uv.errname(code);
+	}
+
+	if (!(code < 0)) {
+		throw new Error('err >= 0');
+	}
+
+	return `Unknown system error ${code}`;
+}
+
+module.exports = code => errname(uv, code);
+
+// Used for testing the fallback behavior
+module.exports.__test__ = errname;
+
+
+/***/ }),
+
+/***/ 38875:
+/***/ ((module) => {
+
+
+const alias = ['stdin', 'stdout', 'stderr'];
+
+const hasAlias = opts => alias.some(x => Boolean(opts[x]));
+
+module.exports = opts => {
+	if (!opts) {
+		return null;
+	}
+
+	if (opts.stdio && hasAlias(opts)) {
+		throw new Error(`It's not possible to provide \`stdio\` in combination with one of ${alias.map(x => `\`${x}\``).join(', ')}`);
+	}
+
+	if (typeof opts.stdio === 'string') {
+		return opts.stdio;
+	}
+
+	const stdio = opts.stdio || [];
+
+	if (!Array.isArray(stdio)) {
+		throw new TypeError(`Expected \`stdio\` to be of type \`string\` or \`Array\`, got \`${typeof stdio}\``);
+	}
+
+	const result = [];
+	const len = Math.max(stdio.length, alias.length);
+
+	for (let i = 0; i < len; i++) {
+		let value = null;
+
+		if (stdio[i] !== undefined) {
+			value = stdio[i];
+		} else if (opts[alias[i]] !== undefined) {
+			value = opts[alias[i]];
+		}
+
+		result[i] = value;
+	}
+
+	return result;
+};
+
+
+/***/ }),
+
+/***/ 9832:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const PassThrough = (__nccwpck_require__(2203).PassThrough);
+
+module.exports = opts => {
+	opts = Object.assign({}, opts);
+
+	const array = opts.array;
+	let encoding = opts.encoding;
+	const buffer = encoding === 'buffer';
+	let objectMode = false;
+
+	if (array) {
+		objectMode = !(encoding || buffer);
+	} else {
+		encoding = encoding || 'utf8';
+	}
+
+	if (buffer) {
+		encoding = null;
+	}
+
+	let len = 0;
+	const ret = [];
+	const stream = new PassThrough({objectMode});
+
+	if (encoding) {
+		stream.setEncoding(encoding);
+	}
+
+	stream.on('data', chunk => {
+		ret.push(chunk);
+
+		if (objectMode) {
+			len = ret.length;
+		} else {
+			len += chunk.length;
+		}
+	});
+
+	stream.getBufferedValue = () => {
+		if (array) {
+			return ret;
+		}
+
+		return buffer ? Buffer.concat(ret, len) : ret.join('');
+	};
+
+	stream.getBufferedLength = () => len;
+
+	return stream;
+};
+
+
+/***/ }),
+
+/***/ 6833:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const bufferStream = __nccwpck_require__(9832);
+
+function getStream(inputStream, opts) {
+	if (!inputStream) {
+		return Promise.reject(new Error('Expected a stream'));
+	}
+
+	opts = Object.assign({maxBuffer: Infinity}, opts);
+
+	const maxBuffer = opts.maxBuffer;
+	let stream;
+	let clean;
+
+	const p = new Promise((resolve, reject) => {
+		const error = err => {
+			if (err) { // null check
+				err.bufferedData = stream.getBufferedValue();
+			}
+
+			reject(err);
+		};
+
+		stream = bufferStream(opts);
+		inputStream.once('error', error);
+		inputStream.pipe(stream);
+
+		stream.on('data', () => {
+			if (stream.getBufferedLength() > maxBuffer) {
+				reject(new Error('maxBuffer exceeded'));
+			}
+		});
+		stream.once('error', error);
+		stream.on('end', resolve);
+
+		clean = () => {
+			// some streams doesn't implement the `stream.Readable` interface correctly
+			if (inputStream.unpipe) {
+				inputStream.unpipe(stream);
+			}
+		};
+	});
+
+	p.then(clean, clean);
+
+	return p.then(() => stream.getBufferedValue());
+}
+
+module.exports = getStream;
+module.exports.buffer = (stream, opts) => getStream(stream, Object.assign({}, opts, {encoding: 'buffer'}));
+module.exports.array = (stream, opts) => getStream(stream, Object.assign({}, opts, {array: true}));
+
+
+/***/ }),
+
+/***/ 93065:
+/***/ ((module) => {
+
+
+
+var isStream = module.exports = function (stream) {
+	return stream !== null && typeof stream === 'object' && typeof stream.pipe === 'function';
+};
+
+isStream.writable = function (stream) {
+	return isStream(stream) && stream.writable !== false && typeof stream._write === 'function' && typeof stream._writableState === 'object';
+};
+
+isStream.readable = function (stream) {
+	return isStream(stream) && stream.readable !== false && typeof stream._read === 'function' && typeof stream._readableState === 'object';
+};
+
+isStream.duplex = function (stream) {
+	return isStream.writable(stream) && isStream.readable(stream);
+};
+
+isStream.transform = function (stream) {
+	return isStream.duplex(stream) && typeof stream._transform === 'function' && typeof stream._transformState === 'object';
+};
+
+
+/***/ }),
+
+/***/ 56552:
+/***/ ((module) => {
+
+
+
+const processFn = (fn, opts) => function () {
+	const P = opts.promiseModule;
+	const args = new Array(arguments.length);
+
+	for (let i = 0; i < arguments.length; i++) {
+		args[i] = arguments[i];
+	}
+
+	return new P((resolve, reject) => {
+		if (opts.errorFirst) {
+			args.push(function (err, result) {
+				if (opts.multiArgs) {
+					const results = new Array(arguments.length - 1);
+
+					for (let i = 1; i < arguments.length; i++) {
+						results[i - 1] = arguments[i];
+					}
+
+					if (err) {
+						results.unshift(err);
+						reject(results);
+					} else {
+						resolve(results);
+					}
+				} else if (err) {
+					reject(err);
+				} else {
+					resolve(result);
+				}
+			});
+		} else {
+			args.push(function (result) {
+				if (opts.multiArgs) {
+					const results = new Array(arguments.length - 1);
+
+					for (let i = 0; i < arguments.length; i++) {
+						results[i] = arguments[i];
+					}
+
+					resolve(results);
+				} else {
+					resolve(result);
+				}
+			});
+		}
+
+		fn.apply(this, args);
+	});
+};
+
+module.exports = (obj, opts) => {
+	opts = Object.assign({
+		exclude: [/.+(Sync|Stream)$/],
+		errorFirst: true,
+		promiseModule: Promise
+	}, opts);
+
+	const filter = key => {
+		const match = pattern => typeof pattern === 'string' ? key === pattern : pattern.test(key);
+		return opts.include ? opts.include.some(match) : !opts.exclude.some(match);
+	};
+
+	let ret;
+	if (typeof obj === 'function') {
+		ret = function () {
+			if (opts.excludeMain) {
+				return obj.apply(this, arguments);
+			}
+
+			return processFn(obj, opts).apply(this, arguments);
+		};
+	} else {
+		ret = Object.create(Object.getPrototypeOf(obj));
+	}
+
+	for (const key in obj) { // eslint-disable-line guard-for-in
+		const x = obj[key];
+		ret[key] = typeof x === 'function' && filter(key) ? processFn(x, opts) : x;
+	}
+
+	return ret;
+};
+
+
+/***/ }),
+
+/***/ 26386:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+module.exports = rimraf
+rimraf.sync = rimrafSync
+
+var assert = __nccwpck_require__(42613)
+var path = __nccwpck_require__(16928)
+var fs = __nccwpck_require__(79896)
+var glob = undefined
+try {
+  glob = __nccwpck_require__(33574)
+} catch (_err) {
+  // treat glob as optional.
+}
+var _0666 = parseInt('666', 8)
+
+var defaultGlobOpts = {
+  nosort: true,
+  silent: true
+}
+
+// for EMFILE handling
+var timeout = 0
+
+var isWindows = (process.platform === "win32")
+
+function defaults (options) {
+  var methods = [
+    'unlink',
+    'chmod',
+    'stat',
+    'lstat',
+    'rmdir',
+    'readdir'
+  ]
+  methods.forEach(function(m) {
+    options[m] = options[m] || fs[m]
+    m = m + 'Sync'
+    options[m] = options[m] || fs[m]
+  })
+
+  options.maxBusyTries = options.maxBusyTries || 3
+  options.emfileWait = options.emfileWait || 1000
+  if (options.glob === false) {
+    options.disableGlob = true
+  }
+  if (options.disableGlob !== true && glob === undefined) {
+    throw Error('glob dependency not found, set `options.disableGlob = true` if intentional')
+  }
+  options.disableGlob = options.disableGlob || false
+  options.glob = options.glob || defaultGlobOpts
+}
+
+function rimraf (p, options, cb) {
+  if (typeof options === 'function') {
+    cb = options
+    options = {}
+  }
+
+  assert(p, 'rimraf: missing path')
+  assert.equal(typeof p, 'string', 'rimraf: path should be a string')
+  assert.equal(typeof cb, 'function', 'rimraf: callback function required')
+  assert(options, 'rimraf: invalid options argument provided')
+  assert.equal(typeof options, 'object', 'rimraf: options should be object')
+
+  defaults(options)
+
+  var busyTries = 0
+  var errState = null
+  var n = 0
+
+  if (options.disableGlob || !glob.hasMagic(p))
+    return afterGlob(null, [p])
+
+  options.lstat(p, function (er, stat) {
+    if (!er)
+      return afterGlob(null, [p])
+
+    glob(p, options.glob, afterGlob)
+  })
+
+  function next (er) {
+    errState = errState || er
+    if (--n === 0)
+      cb(errState)
+  }
+
+  function afterGlob (er, results) {
+    if (er)
+      return cb(er)
+
+    n = results.length
+    if (n === 0)
+      return cb()
+
+    results.forEach(function (p) {
+      rimraf_(p, options, function CB (er) {
+        if (er) {
+          if ((er.code === "EBUSY" || er.code === "ENOTEMPTY" || er.code === "EPERM") &&
+              busyTries < options.maxBusyTries) {
+            busyTries ++
+            var time = busyTries * 100
+            // try again, with the same exact callback as this one.
+            return setTimeout(function () {
+              rimraf_(p, options, CB)
+            }, time)
+          }
+
+          // this one won't happen if graceful-fs is used.
+          if (er.code === "EMFILE" && timeout < options.emfileWait) {
+            return setTimeout(function () {
+              rimraf_(p, options, CB)
+            }, timeout ++)
+          }
+
+          // already gone
+          if (er.code === "ENOENT") er = null
+        }
+
+        timeout = 0
+        next(er)
+      })
+    })
+  }
+}
+
+// Two possible strategies.
+// 1. Assume it's a file.  unlink it, then do the dir stuff on EPERM or EISDIR
+// 2. Assume it's a directory.  readdir, then do the file stuff on ENOTDIR
+//
+// Both result in an extra syscall when you guess wrong.  However, there
+// are likely far more normal files in the world than directories.  This
+// is based on the assumption that a the average number of files per
+// directory is >= 1.
+//
+// If anyone ever complains about this, then I guess the strategy could
+// be made configurable somehow.  But until then, YAGNI.
+function rimraf_ (p, options, cb) {
+  assert(p)
+  assert(options)
+  assert(typeof cb === 'function')
+
+  // sunos lets the root user unlink directories, which is... weird.
+  // so we have to lstat here and make sure it's not a dir.
+  options.lstat(p, function (er, st) {
+    if (er && er.code === "ENOENT")
+      return cb(null)
+
+    // Windows can EPERM on stat.  Life is suffering.
+    if (er && er.code === "EPERM" && isWindows)
+      fixWinEPERM(p, options, er, cb)
+
+    if (st && st.isDirectory())
+      return rmdir(p, options, er, cb)
+
+    options.unlink(p, function (er) {
+      if (er) {
+        if (er.code === "ENOENT")
+          return cb(null)
+        if (er.code === "EPERM")
+          return (isWindows)
+            ? fixWinEPERM(p, options, er, cb)
+            : rmdir(p, options, er, cb)
+        if (er.code === "EISDIR")
+          return rmdir(p, options, er, cb)
+      }
+      return cb(er)
+    })
+  })
+}
+
+function fixWinEPERM (p, options, er, cb) {
+  assert(p)
+  assert(options)
+  assert(typeof cb === 'function')
+  if (er)
+    assert(er instanceof Error)
+
+  options.chmod(p, _0666, function (er2) {
+    if (er2)
+      cb(er2.code === "ENOENT" ? null : er)
+    else
+      options.stat(p, function(er3, stats) {
+        if (er3)
+          cb(er3.code === "ENOENT" ? null : er)
+        else if (stats.isDirectory())
+          rmdir(p, options, er, cb)
+        else
+          options.unlink(p, cb)
+      })
+  })
+}
+
+function fixWinEPERMSync (p, options, er) {
+  assert(p)
+  assert(options)
+  if (er)
+    assert(er instanceof Error)
+
+  try {
+    options.chmodSync(p, _0666)
+  } catch (er2) {
+    if (er2.code === "ENOENT")
+      return
+    else
+      throw er
+  }
+
+  try {
+    var stats = options.statSync(p)
+  } catch (er3) {
+    if (er3.code === "ENOENT")
+      return
+    else
+      throw er
+  }
+
+  if (stats.isDirectory())
+    rmdirSync(p, options, er)
+  else
+    options.unlinkSync(p)
+}
+
+function rmdir (p, options, originalEr, cb) {
+  assert(p)
+  assert(options)
+  if (originalEr)
+    assert(originalEr instanceof Error)
+  assert(typeof cb === 'function')
+
+  // try to rmdir first, and only readdir on ENOTEMPTY or EEXIST (SunOS)
+  // if we guessed wrong, and it's not a directory, then
+  // raise the original error.
+  options.rmdir(p, function (er) {
+    if (er && (er.code === "ENOTEMPTY" || er.code === "EEXIST" || er.code === "EPERM"))
+      rmkids(p, options, cb)
+    else if (er && er.code === "ENOTDIR")
+      cb(originalEr)
+    else
+      cb(er)
+  })
+}
+
+function rmkids(p, options, cb) {
+  assert(p)
+  assert(options)
+  assert(typeof cb === 'function')
+
+  options.readdir(p, function (er, files) {
+    if (er)
+      return cb(er)
+    var n = files.length
+    if (n === 0)
+      return options.rmdir(p, cb)
+    var errState
+    files.forEach(function (f) {
+      rimraf(path.join(p, f), options, function (er) {
+        if (errState)
+          return
+        if (er)
+          return cb(errState = er)
+        if (--n === 0)
+          options.rmdir(p, cb)
+      })
+    })
+  })
+}
+
+// this looks simpler, and is strictly *faster*, but will
+// tie up the JavaScript thread and fail on excessively
+// deep directory trees.
+function rimrafSync (p, options) {
+  options = options || {}
+  defaults(options)
+
+  assert(p, 'rimraf: missing path')
+  assert.equal(typeof p, 'string', 'rimraf: path should be a string')
+  assert(options, 'rimraf: missing options')
+  assert.equal(typeof options, 'object', 'rimraf: options should be object')
+
+  var results
+
+  if (options.disableGlob || !glob.hasMagic(p)) {
+    results = [p]
+  } else {
+    try {
+      options.lstatSync(p)
+      results = [p]
+    } catch (er) {
+      results = glob.sync(p, options.glob)
+    }
+  }
+
+  if (!results.length)
+    return
+
+  for (var i = 0; i < results.length; i++) {
+    var p = results[i]
+
+    try {
+      var st = options.lstatSync(p)
+    } catch (er) {
+      if (er.code === "ENOENT")
+        return
+
+      // Windows can EPERM on stat.  Life is suffering.
+      if (er.code === "EPERM" && isWindows)
+        fixWinEPERMSync(p, options, er)
+    }
+
+    try {
+      // sunos lets the root user unlink directories, which is... weird.
+      if (st && st.isDirectory())
+        rmdirSync(p, options, null)
+      else
+        options.unlinkSync(p)
+    } catch (er) {
+      if (er.code === "ENOENT")
+        return
+      if (er.code === "EPERM")
+        return isWindows ? fixWinEPERMSync(p, options, er) : rmdirSync(p, options, er)
+      if (er.code !== "EISDIR")
+        throw er
+
+      rmdirSync(p, options, er)
+    }
+  }
+}
+
+function rmdirSync (p, options, originalEr) {
+  assert(p)
+  assert(options)
+  if (originalEr)
+    assert(originalEr instanceof Error)
+
+  try {
+    options.rmdirSync(p)
+  } catch (er) {
+    if (er.code === "ENOENT")
+      return
+    if (er.code === "ENOTDIR")
+      throw originalEr
+    if (er.code === "ENOTEMPTY" || er.code === "EEXIST" || er.code === "EPERM")
+      rmkidsSync(p, options)
+  }
+}
+
+function rmkidsSync (p, options) {
+  assert(p)
+  assert(options)
+  options.readdirSync(p).forEach(function (f) {
+    rimrafSync(path.join(p, f), options)
+  })
+
+  // We only end up here once we got ENOTEMPTY at least once, and
+  // at this point, we are guaranteed to have removed all the kids.
+  // So, we know that it won't be ENOENT or ENOTDIR or anything else.
+  // try really hard to delete stuff on windows, because it has a
+  // PROFOUNDLY annoying habit of not closing handles promptly when
+  // files are deleted, resulting in spurious ENOTEMPTY errors.
+  var retries = isWindows ? 100 : 1
+  var i = 0
+  do {
+    var threw = true
+    try {
+      var ret = options.rmdirSync(p, options)
+      threw = false
+      return ret
+    } finally {
+      if (++i < retries && threw)
+        continue
+    }
+  } while (true)
+}
+
+
+/***/ }),
+
 /***/ 5823:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -86134,7 +87637,7 @@ module.exports = new BinWrapper()
 	.src(`${url}freebsd/x64/gifsicle`, 'freebsd', 'x64')
 	.src(`${url}win/x86/gifsicle.exe`, 'win32', 'x86')
 	.src(`${url}win/x64/gifsicle.exe`, 'win32', 'x64')
-	.dest(__nccwpck_require__.ab + "vendor2")
+	.dest(__nccwpck_require__.ab + "vendor")
 	.use(process.platform === 'win32' ? 'gifsicle.exe' : 'gifsicle');
 
 
@@ -94880,1089 +96383,173 @@ module.exports = (options = {}) => async input => {
 
 /***/ }),
 
-/***/ 12705:
+/***/ 71285:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
+const execBuffer = __nccwpck_require__(48118);
+const isJpg = __nccwpck_require__(97918);
+const jpegtran = __nccwpck_require__(28551);
 
-const cp = __nccwpck_require__(35317);
-const parse = __nccwpck_require__(77150);
-const enoent = __nccwpck_require__(6524);
+module.exports = options => buf => {
+	options = {...options};
 
-function spawn(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
+	if (!Buffer.isBuffer(buf)) {
+		return Promise.reject(new TypeError('Expected a buffer'));
+	}
 
-    // Spawn the child process
-    const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
+	if (!isJpg(buf)) {
+		return Promise.resolve(buf);
+	}
 
-    // Hook into child process "exit" event to emit an error if the command
-    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    enoent.hookChildProcess(spawned, parsed);
+	const args = ['-copy', 'none'];
 
-    return spawned;
-}
+	if (options.progressive) {
+		args.push('-progressive');
+	}
 
-function spawnSync(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
+	if (options.arithmetic) {
+		args.push('-arithmetic');
+	} else {
+		args.push('-optimize');
+	}
 
-    // Spawn the child process
-    const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
+	args.push('-outfile', execBuffer.output, execBuffer.input);
 
-    // Analyze if the command does not exist, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
-
-    return result;
-}
-
-module.exports = spawn;
-module.exports.spawn = spawn;
-module.exports.sync = spawnSync;
-
-module.exports._parse = parse;
-module.exports._enoent = enoent;
-
-
-/***/ }),
-
-/***/ 6524:
-/***/ ((module) => {
-
-
-
-const isWin = process.platform === 'win32';
-
-function notFoundError(original, syscall) {
-    return Object.assign(new Error(`${syscall} ${original.command} ENOENT`), {
-        code: 'ENOENT',
-        errno: 'ENOENT',
-        syscall: `${syscall} ${original.command}`,
-        path: original.command,
-        spawnargs: original.args,
-    });
-}
-
-function hookChildProcess(cp, parsed) {
-    if (!isWin) {
-        return;
-    }
-
-    const originalEmit = cp.emit;
-
-    cp.emit = function (name, arg1) {
-        // If emitting "exit" event and exit code is 1, we need to check if
-        // the command exists and emit an "error" instead
-        // See https://github.com/IndigoUnited/node-cross-spawn/issues/16
-        if (name === 'exit') {
-            const err = verifyENOENT(arg1, parsed);
-
-            if (err) {
-                return originalEmit.call(cp, 'error', err);
-            }
-        }
-
-        return originalEmit.apply(cp, arguments); // eslint-disable-line prefer-rest-params
-    };
-}
-
-function verifyENOENT(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawn');
-    }
-
-    return null;
-}
-
-function verifyENOENTSync(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawnSync');
-    }
-
-    return null;
-}
-
-module.exports = {
-    hookChildProcess,
-    verifyENOENT,
-    verifyENOENTSync,
-    notFoundError,
+	return execBuffer({
+		input: buf,
+		bin: jpegtran,
+		args
+	}).catch(error => {
+		error.message = error.stderr || error.message;
+		throw error;
+	});
 };
 
 
 /***/ }),
 
-/***/ 77150:
+/***/ 48788:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
-
-const path = __nccwpck_require__(16928);
-const resolveCommand = __nccwpck_require__(46261);
-const escape = __nccwpck_require__(41251);
-const readShebang = __nccwpck_require__(38510);
-
-const isWin = process.platform === 'win32';
-const isExecutableRegExp = /\.(?:com|exe)$/i;
-const isCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
-
-function detectShebang(parsed) {
-    parsed.file = resolveCommand(parsed);
-
-    const shebang = parsed.file && readShebang(parsed.file);
-
-    if (shebang) {
-        parsed.args.unshift(parsed.file);
-        parsed.command = shebang;
-
-        return resolveCommand(parsed);
-    }
-
-    return parsed.file;
-}
-
-function parseNonShell(parsed) {
-    if (!isWin) {
-        return parsed;
-    }
-
-    // Detect & add support for shebangs
-    const commandFile = detectShebang(parsed);
-
-    // We don't need a shell if the command filename is an executable
-    const needsShell = !isExecutableRegExp.test(commandFile);
-
-    // If a shell is required, use cmd.exe and take care of escaping everything correctly
-    // Note that `forceShell` is an hidden option used only in tests
-    if (parsed.options.forceShell || needsShell) {
-        // Need to double escape meta chars if the command is a cmd-shim located in `node_modules/.bin/`
-        // The cmd-shim simply calls execute the package bin file with NodeJS, proxying any argument
-        // Because the escape of metachars with ^ gets interpreted when the cmd.exe is first called,
-        // we need to double escape them
-        const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-
-        // Normalize posix paths into OS compatible paths (e.g.: foo/bar -> foo\bar)
-        // This is necessary otherwise it will always fail with ENOENT in those cases
-        parsed.command = path.normalize(parsed.command);
-
-        // Escape command & arguments
-        parsed.command = escape.command(parsed.command);
-        parsed.args = parsed.args.map((arg) => escape.argument(arg, needsDoubleEscapeMetaChars));
-
-        const shellCommand = [parsed.command].concat(parsed.args).join(' ');
-
-        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
-        parsed.command = process.env.comspec || 'cmd.exe';
-        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
-    }
-
-    return parsed;
-}
-
-function parse(command, args, options) {
-    // Normalize arguments, similar to nodejs
-    if (args && !Array.isArray(args)) {
-        options = args;
-        args = null;
-    }
-
-    args = args ? args.slice(0) : []; // Clone array to avoid changing the original
-    options = Object.assign({}, options); // Clone object to avoid changing the original
-
-    // Build our parsed object
-    const parsed = {
-        command,
-        args,
-        options,
-        file: undefined,
-        original: {
-            command,
-            args,
-        },
-    };
-
-    // Delegate further parsing to shell or non-shell
-    return options.shell ? parsed : parseNonShell(parsed);
-}
-
-module.exports = parse;
-
-
-/***/ }),
-
-/***/ 41251:
-/***/ ((module) => {
-
-
-
-// See http://www.robvanderwoude.com/escapechars.php
-const metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
-
-function escapeCommand(arg) {
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    return arg;
-}
-
-function escapeArgument(arg, doubleEscapeMetaChars) {
-    // Convert to string
-    arg = `${arg}`;
-
-    // Algorithm below is based on https://qntm.org/cmd
-    // It's slightly altered to disable JS backtracking to avoid hanging on specially crafted input
-    // Please see https://github.com/moxystudio/node-cross-spawn/pull/160 for more information
-
-    // Sequence of backslashes followed by a double quote:
-    // double up all the backslashes and escape the double quote
-    arg = arg.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
-
-    // Sequence of backslashes followed by the end of the string
-    // (which will become a double quote later):
-    // double up all the backslashes
-    arg = arg.replace(/(?=(\\+?)?)\1$/, '$1$1');
-
-    // All other backslashes occur literally
-
-    // Quote the whole thing:
-    arg = `"${arg}"`;
-
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    // Double escape meta chars if necessary
-    if (doubleEscapeMetaChars) {
-        arg = arg.replace(metaCharsRegExp, '^$1');
-    }
-
-    return arg;
-}
-
-module.exports.command = escapeCommand;
-module.exports.argument = escapeArgument;
-
-
-/***/ }),
-
-/***/ 38510:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const fs = __nccwpck_require__(79896);
-const shebangCommand = __nccwpck_require__(80835);
-
-function readShebang(command) {
-    // Read the first 150 bytes from the file
-    const size = 150;
-    const buffer = Buffer.alloc(size);
-
-    let fd;
-
-    try {
-        fd = fs.openSync(command, 'r');
-        fs.readSync(fd, buffer, 0, size, 0);
-        fs.closeSync(fd);
-    } catch (e) { /* Empty */ }
-
-    // Attempt to extract shebang (null is returned if not a shebang)
-    return shebangCommand(buffer.toString());
-}
-
-module.exports = readShebang;
-
-
-/***/ }),
-
-/***/ 46261:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const path = __nccwpck_require__(16928);
-const which = __nccwpck_require__(7535);
-const getPathKey = __nccwpck_require__(63027);
-
-function resolveCommandAttempt(parsed, withoutPathExt) {
-    const env = parsed.options.env || process.env;
-    const cwd = process.cwd();
-    const hasCustomCwd = parsed.options.cwd != null;
-    // Worker threads do not have process.chdir()
-    const shouldSwitchCwd = hasCustomCwd && process.chdir !== undefined && !process.chdir.disabled;
-
-    // If a custom `cwd` was specified, we need to change the process cwd
-    // because `which` will do stat calls but does not support a custom cwd
-    if (shouldSwitchCwd) {
-        try {
-            process.chdir(parsed.options.cwd);
-        } catch (err) {
-            /* Empty */
-        }
-    }
-
-    let resolved;
-
-    try {
-        resolved = which.sync(parsed.command, {
-            path: env[getPathKey({ env })],
-            pathExt: withoutPathExt ? path.delimiter : undefined,
-        });
-    } catch (e) {
-        /* Empty */
-    } finally {
-        if (shouldSwitchCwd) {
-            process.chdir(cwd);
-        }
-    }
-
-    // If we successfully resolved, ensure that an absolute path is returned
-    // Note that when a custom `cwd` was used, we need to resolve to an absolute path based on it
-    if (resolved) {
-        resolved = path.resolve(hasCustomCwd ? parsed.options.cwd : '', resolved);
-    }
-
-    return resolved;
-}
-
-function resolveCommand(parsed) {
-    return resolveCommandAttempt(parsed) || resolveCommandAttempt(parsed, true);
-}
-
-module.exports = resolveCommand;
-
-
-/***/ }),
-
-/***/ 63027:
-/***/ ((module) => {
-
-
-
-const pathKey = (options = {}) => {
-	const environment = options.env || process.env;
-	const platform = options.platform || process.platform;
-
-	if (platform !== 'win32') {
-		return 'PATH';
+const execa = __nccwpck_require__(5823);
+const isPng = __nccwpck_require__(8594);
+const isStream = __nccwpck_require__(5819);
+const pngquant = __nccwpck_require__(36850);
+const ow = __nccwpck_require__(46975);
+
+const imageminPngquant = (options = {}) => input => {
+	const isBuffer = Buffer.isBuffer(input);
+
+	if (!isBuffer && !isStream(input)) {
+		return Promise.reject(new TypeError(`Expected a Buffer or Stream, got ${typeof input}`));
 	}
 
-	return Object.keys(environment).reverse().find(key => key.toUpperCase() === 'PATH') || 'Path';
+	if (isBuffer && !isPng(input)) {
+		return Promise.resolve(input);
+	}
+
+	const args = ['-'];
+
+	if (typeof options.speed !== 'undefined') {
+		ow(options.speed, ow.number.integer.inRange(1, 11));
+		args.push('--speed', options.speed);
+	}
+
+	if (typeof options.strip !== 'undefined') {
+		ow(options.strip, ow.boolean);
+		args.push('--strip');
+	}
+
+	if (typeof options.quality !== 'undefined') {
+		ow(options.quality, ow.array.length(2).ofType(ow.number.inRange(0, 1)));
+		const [min, max] = options.quality;
+		args.push('--quality', `${Math.round(min * 100)}-${Math.round(max * 100)}`);
+	}
+
+	if (typeof options.dithering !== 'undefined') {
+		ow(options.dithering, ow.any(ow.number.inRange(0, 1), ow.boolean.false));
+
+		if (typeof options.dithering === 'number') {
+			args.push(`--floyd=${options.dithering}`);
+		} else if (options.dithering === false) {
+			args.push('--ordered');
+		}
+	}
+
+	if (typeof options.posterize !== 'undefined') {
+		ow(options.posterize, ow.number);
+		args.push('--posterize', options.posterize);
+	}
+
+	if (typeof options.verbose !== 'undefined') {
+		ow(options.verbose, ow.boolean);
+		args.push('--verbose');
+	}
+
+	const cp = execa(pngquant, args, {
+		encoding: null,
+		maxBuffer: Infinity,
+		input
+	});
+
+	const promise = cp
+		.then(result => result.stdout)
+		.catch(error => {
+			if (error.code === 99) {
+				return input;
+			}
+
+			error.message = error.stderr || error.message;
+			throw error;
+		});
+
+	cp.stdout.then = promise.then.bind(promise);
+	cp.stdout.catch = promise.catch.bind(promise);
+
+	return cp.stdout;
 };
 
-module.exports = pathKey;
-// TODO: Remove this for the next major release
-module.exports["default"] = pathKey;
+module.exports = imageminPngquant;
+module.exports["default"] = imageminPngquant;
 
 
 /***/ }),
 
-/***/ 80835:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ 5819:
+/***/ ((module) => {
 
 
-const shebangRegex = __nccwpck_require__(88561);
 
-module.exports = (string = '') => {
-	const match = string.match(shebangRegex);
+var isStream = module.exports = function (stream) {
+	return stream !== null && typeof stream === 'object' && typeof stream.pipe === 'function';
+};
 
-	if (!match) {
-		return null;
-	}
+isStream.writable = function (stream) {
+	return isStream(stream) && stream.writable !== false && typeof stream._write === 'function' && typeof stream._writableState === 'object';
+};
 
-	const [path, argument] = match[0].replace(/#! ?/, '').split(' ');
-	const binary = path.split('/').pop();
+isStream.readable = function (stream) {
+	return isStream(stream) && stream.readable !== false && typeof stream._read === 'function' && typeof stream._readableState === 'object';
+};
 
-	if (binary === 'env') {
-		return argument;
-	}
+isStream.duplex = function (stream) {
+	return isStream.writable(stream) && isStream.readable(stream);
+};
 
-	return argument ? `${binary} ${argument}` : binary;
+isStream.transform = function (stream) {
+	return isStream.duplex(stream) && typeof stream._transform === 'function' && typeof stream._transformState === 'object';
 };
 
 
 /***/ }),
 
-/***/ 88561:
+/***/ 46975:
 /***/ ((module) => {
 
-
-module.exports = /^#!(.*)/;
-
-
-/***/ }),
-
-/***/ 7535:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-const isWindows = process.platform === 'win32' ||
-    process.env.OSTYPE === 'cygwin' ||
-    process.env.OSTYPE === 'msys'
-
-const path = __nccwpck_require__(16928)
-const COLON = isWindows ? ';' : ':'
-const isexe = __nccwpck_require__(72940)
-
-const getNotFoundError = (cmd) =>
-  Object.assign(new Error(`not found: ${cmd}`), { code: 'ENOENT' })
-
-const getPathInfo = (cmd, opt) => {
-  const colon = opt.colon || COLON
-
-  // If it has a slash, then we don't bother searching the pathenv.
-  // just check the file itself, and that's it.
-  const pathEnv = cmd.match(/\//) || isWindows && cmd.match(/\\/) ? ['']
-    : (
-      [
-        // windows always checks the cwd first
-        ...(isWindows ? [process.cwd()] : []),
-        ...(opt.path || process.env.PATH ||
-          /* istanbul ignore next: very unusual */ '').split(colon),
-      ]
-    )
-  const pathExtExe = isWindows
-    ? opt.pathExt || process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM'
-    : ''
-  const pathExt = isWindows ? pathExtExe.split(colon) : ['']
-
-  if (isWindows) {
-    if (cmd.indexOf('.') !== -1 && pathExt[0] !== '')
-      pathExt.unshift('')
-  }
-
-  return {
-    pathEnv,
-    pathExt,
-    pathExtExe,
-  }
-}
-
-const which = (cmd, opt, cb) => {
-  if (typeof opt === 'function') {
-    cb = opt
-    opt = {}
-  }
-  if (!opt)
-    opt = {}
-
-  const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt)
-  const found = []
-
-  const step = i => new Promise((resolve, reject) => {
-    if (i === pathEnv.length)
-      return opt.all && found.length ? resolve(found)
-        : reject(getNotFoundError(cmd))
-
-    const ppRaw = pathEnv[i]
-    const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw
-
-    const pCmd = path.join(pathPart, cmd)
-    const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd
-      : pCmd
-
-    resolve(subStep(p, i, 0))
-  })
-
-  const subStep = (p, i, ii) => new Promise((resolve, reject) => {
-    if (ii === pathExt.length)
-      return resolve(step(i + 1))
-    const ext = pathExt[ii]
-    isexe(p + ext, { pathExt: pathExtExe }, (er, is) => {
-      if (!er && is) {
-        if (opt.all)
-          found.push(p + ext)
-        else
-          return resolve(p + ext)
-      }
-      return resolve(subStep(p, i, ii + 1))
-    })
-  })
-
-  return cb ? step(0).then(res => cb(null, res), cb) : step(0)
-}
-
-const whichSync = (cmd, opt) => {
-  opt = opt || {}
-
-  const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt)
-  const found = []
-
-  for (let i = 0; i < pathEnv.length; i ++) {
-    const ppRaw = pathEnv[i]
-    const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw
-
-    const pCmd = path.join(pathPart, cmd)
-    const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd
-      : pCmd
-
-    for (let j = 0; j < pathExt.length; j ++) {
-      const cur = p + pathExt[j]
-      try {
-        const is = isexe.sync(cur, { pathExt: pathExtExe })
-        if (is) {
-          if (opt.all)
-            found.push(cur)
-          else
-            return cur
-        }
-      } catch (ex) {}
-    }
-  }
-
-  if (opt.all && found.length)
-    return found
-
-  if (opt.nothrow)
-    return null
-
-  throw getNotFoundError(cmd)
-}
-
-module.exports = which
-which.sync = whichSync
-
-
-/***/ }),
-
-/***/ 65614:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const cp = __nccwpck_require__(35317);
-const parse = __nccwpck_require__(19857);
-const enoent = __nccwpck_require__(90977);
-
-function spawn(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
-
-    // Spawn the child process
-    const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
-
-    // Hook into child process "exit" event to emit an error if the command
-    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    enoent.hookChildProcess(spawned, parsed);
-
-    return spawned;
-}
-
-function spawnSync(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
-
-    // Spawn the child process
-    const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
-
-    // Analyze if the command does not exist, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
-
-    return result;
-}
-
-module.exports = spawn;
-module.exports.spawn = spawn;
-module.exports.sync = spawnSync;
-
-module.exports._parse = parse;
-module.exports._enoent = enoent;
-
-
-/***/ }),
-
-/***/ 90977:
-/***/ ((module) => {
-
-
-
-const isWin = process.platform === 'win32';
-
-function notFoundError(original, syscall) {
-    return Object.assign(new Error(`${syscall} ${original.command} ENOENT`), {
-        code: 'ENOENT',
-        errno: 'ENOENT',
-        syscall: `${syscall} ${original.command}`,
-        path: original.command,
-        spawnargs: original.args,
-    });
-}
-
-function hookChildProcess(cp, parsed) {
-    if (!isWin) {
-        return;
-    }
-
-    const originalEmit = cp.emit;
-
-    cp.emit = function (name, arg1) {
-        // If emitting "exit" event and exit code is 1, we need to check if
-        // the command exists and emit an "error" instead
-        // See https://github.com/IndigoUnited/node-cross-spawn/issues/16
-        if (name === 'exit') {
-            const err = verifyENOENT(arg1, parsed);
-
-            if (err) {
-                return originalEmit.call(cp, 'error', err);
-            }
-        }
-
-        return originalEmit.apply(cp, arguments); // eslint-disable-line prefer-rest-params
-    };
-}
-
-function verifyENOENT(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawn');
-    }
-
-    return null;
-}
-
-function verifyENOENTSync(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawnSync');
-    }
-
-    return null;
-}
-
-module.exports = {
-    hookChildProcess,
-    verifyENOENT,
-    verifyENOENTSync,
-    notFoundError,
-};
-
-
-/***/ }),
-
-/***/ 19857:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const path = __nccwpck_require__(16928);
-const resolveCommand = __nccwpck_require__(65206);
-const escape = __nccwpck_require__(26808);
-const readShebang = __nccwpck_require__(70123);
-
-const isWin = process.platform === 'win32';
-const isExecutableRegExp = /\.(?:com|exe)$/i;
-const isCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
-
-function detectShebang(parsed) {
-    parsed.file = resolveCommand(parsed);
-
-    const shebang = parsed.file && readShebang(parsed.file);
-
-    if (shebang) {
-        parsed.args.unshift(parsed.file);
-        parsed.command = shebang;
-
-        return resolveCommand(parsed);
-    }
-
-    return parsed.file;
-}
-
-function parseNonShell(parsed) {
-    if (!isWin) {
-        return parsed;
-    }
-
-    // Detect & add support for shebangs
-    const commandFile = detectShebang(parsed);
-
-    // We don't need a shell if the command filename is an executable
-    const needsShell = !isExecutableRegExp.test(commandFile);
-
-    // If a shell is required, use cmd.exe and take care of escaping everything correctly
-    // Note that `forceShell` is an hidden option used only in tests
-    if (parsed.options.forceShell || needsShell) {
-        // Need to double escape meta chars if the command is a cmd-shim located in `node_modules/.bin/`
-        // The cmd-shim simply calls execute the package bin file with NodeJS, proxying any argument
-        // Because the escape of metachars with ^ gets interpreted when the cmd.exe is first called,
-        // we need to double escape them
-        const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-
-        // Normalize posix paths into OS compatible paths (e.g.: foo/bar -> foo\bar)
-        // This is necessary otherwise it will always fail with ENOENT in those cases
-        parsed.command = path.normalize(parsed.command);
-
-        // Escape command & arguments
-        parsed.command = escape.command(parsed.command);
-        parsed.args = parsed.args.map((arg) => escape.argument(arg, needsDoubleEscapeMetaChars));
-
-        const shellCommand = [parsed.command].concat(parsed.args).join(' ');
-
-        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
-        parsed.command = process.env.comspec || 'cmd.exe';
-        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
-    }
-
-    return parsed;
-}
-
-function parse(command, args, options) {
-    // Normalize arguments, similar to nodejs
-    if (args && !Array.isArray(args)) {
-        options = args;
-        args = null;
-    }
-
-    args = args ? args.slice(0) : []; // Clone array to avoid changing the original
-    options = Object.assign({}, options); // Clone object to avoid changing the original
-
-    // Build our parsed object
-    const parsed = {
-        command,
-        args,
-        options,
-        file: undefined,
-        original: {
-            command,
-            args,
-        },
-    };
-
-    // Delegate further parsing to shell or non-shell
-    return options.shell ? parsed : parseNonShell(parsed);
-}
-
-module.exports = parse;
-
-
-/***/ }),
-
-/***/ 26808:
-/***/ ((module) => {
-
-
-
-// See http://www.robvanderwoude.com/escapechars.php
-const metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
-
-function escapeCommand(arg) {
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    return arg;
-}
-
-function escapeArgument(arg, doubleEscapeMetaChars) {
-    // Convert to string
-    arg = `${arg}`;
-
-    // Algorithm below is based on https://qntm.org/cmd
-    // It's slightly altered to disable JS backtracking to avoid hanging on specially crafted input
-    // Please see https://github.com/moxystudio/node-cross-spawn/pull/160 for more information
-
-    // Sequence of backslashes followed by a double quote:
-    // double up all the backslashes and escape the double quote
-    arg = arg.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
-
-    // Sequence of backslashes followed by the end of the string
-    // (which will become a double quote later):
-    // double up all the backslashes
-    arg = arg.replace(/(?=(\\+?)?)\1$/, '$1$1');
-
-    // All other backslashes occur literally
-
-    // Quote the whole thing:
-    arg = `"${arg}"`;
-
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    // Double escape meta chars if necessary
-    if (doubleEscapeMetaChars) {
-        arg = arg.replace(metaCharsRegExp, '^$1');
-    }
-
-    return arg;
-}
-
-module.exports.command = escapeCommand;
-module.exports.argument = escapeArgument;
-
-
-/***/ }),
-
-/***/ 70123:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const fs = __nccwpck_require__(79896);
-const shebangCommand = __nccwpck_require__(2692);
-
-function readShebang(command) {
-    // Read the first 150 bytes from the file
-    const size = 150;
-    const buffer = Buffer.alloc(size);
-
-    let fd;
-
-    try {
-        fd = fs.openSync(command, 'r');
-        fs.readSync(fd, buffer, 0, size, 0);
-        fs.closeSync(fd);
-    } catch (e) { /* Empty */ }
-
-    // Attempt to extract shebang (null is returned if not a shebang)
-    return shebangCommand(buffer.toString());
-}
-
-module.exports = readShebang;
-
-
-/***/ }),
-
-/***/ 65206:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const path = __nccwpck_require__(16928);
-const which = __nccwpck_require__(49476);
-const getPathKey = __nccwpck_require__(50701);
-
-function resolveCommandAttempt(parsed, withoutPathExt) {
-    const env = parsed.options.env || process.env;
-    const cwd = process.cwd();
-    const hasCustomCwd = parsed.options.cwd != null;
-    // Worker threads do not have process.chdir()
-    const shouldSwitchCwd = hasCustomCwd && process.chdir !== undefined && !process.chdir.disabled;
-
-    // If a custom `cwd` was specified, we need to change the process cwd
-    // because `which` will do stat calls but does not support a custom cwd
-    if (shouldSwitchCwd) {
-        try {
-            process.chdir(parsed.options.cwd);
-        } catch (err) {
-            /* Empty */
-        }
-    }
-
-    let resolved;
-
-    try {
-        resolved = which.sync(parsed.command, {
-            path: env[getPathKey({ env })],
-            pathExt: withoutPathExt ? path.delimiter : undefined,
-        });
-    } catch (e) {
-        /* Empty */
-    } finally {
-        if (shouldSwitchCwd) {
-            process.chdir(cwd);
-        }
-    }
-
-    // If we successfully resolved, ensure that an absolute path is returned
-    // Note that when a custom `cwd` was used, we need to resolve to an absolute path based on it
-    if (resolved) {
-        resolved = path.resolve(hasCustomCwd ? parsed.options.cwd : '', resolved);
-    }
-
-    return resolved;
-}
-
-function resolveCommand(parsed) {
-    return resolveCommandAttempt(parsed) || resolveCommandAttempt(parsed, true);
-}
-
-module.exports = resolveCommand;
-
-
-/***/ }),
-
-/***/ 50701:
-/***/ ((module) => {
-
-
-
-const pathKey = (options = {}) => {
-	const environment = options.env || process.env;
-	const platform = options.platform || process.platform;
-
-	if (platform !== 'win32') {
-		return 'PATH';
-	}
-
-	return Object.keys(environment).reverse().find(key => key.toUpperCase() === 'PATH') || 'Path';
-};
-
-module.exports = pathKey;
-// TODO: Remove this for the next major release
-module.exports["default"] = pathKey;
-
-
-/***/ }),
-
-/***/ 2692:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-const shebangRegex = __nccwpck_require__(81610);
-
-module.exports = (string = '') => {
-	const match = string.match(shebangRegex);
-
-	if (!match) {
-		return null;
-	}
-
-	const [path, argument] = match[0].replace(/#! ?/, '').split(' ');
-	const binary = path.split('/').pop();
-
-	if (binary === 'env') {
-		return argument;
-	}
-
-	return argument ? `${binary} ${argument}` : binary;
-};
-
-
-/***/ }),
-
-/***/ 81610:
-/***/ ((module) => {
-
-
-module.exports = /^#!(.*)/;
-
-
-/***/ }),
-
-/***/ 49476:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-const isWindows = process.platform === 'win32' ||
-    process.env.OSTYPE === 'cygwin' ||
-    process.env.OSTYPE === 'msys'
-
-const path = __nccwpck_require__(16928)
-const COLON = isWindows ? ';' : ':'
-const isexe = __nccwpck_require__(72940)
-
-const getNotFoundError = (cmd) =>
-  Object.assign(new Error(`not found: ${cmd}`), { code: 'ENOENT' })
-
-const getPathInfo = (cmd, opt) => {
-  const colon = opt.colon || COLON
-
-  // If it has a slash, then we don't bother searching the pathenv.
-  // just check the file itself, and that's it.
-  const pathEnv = cmd.match(/\//) || isWindows && cmd.match(/\\/) ? ['']
-    : (
-      [
-        // windows always checks the cwd first
-        ...(isWindows ? [process.cwd()] : []),
-        ...(opt.path || process.env.PATH ||
-          /* istanbul ignore next: very unusual */ '').split(colon),
-      ]
-    )
-  const pathExtExe = isWindows
-    ? opt.pathExt || process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM'
-    : ''
-  const pathExt = isWindows ? pathExtExe.split(colon) : ['']
-
-  if (isWindows) {
-    if (cmd.indexOf('.') !== -1 && pathExt[0] !== '')
-      pathExt.unshift('')
-  }
-
-  return {
-    pathEnv,
-    pathExt,
-    pathExtExe,
-  }
-}
-
-const which = (cmd, opt, cb) => {
-  if (typeof opt === 'function') {
-    cb = opt
-    opt = {}
-  }
-  if (!opt)
-    opt = {}
-
-  const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt)
-  const found = []
-
-  const step = i => new Promise((resolve, reject) => {
-    if (i === pathEnv.length)
-      return opt.all && found.length ? resolve(found)
-        : reject(getNotFoundError(cmd))
-
-    const ppRaw = pathEnv[i]
-    const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw
-
-    const pCmd = path.join(pathPart, cmd)
-    const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd
-      : pCmd
-
-    resolve(subStep(p, i, 0))
-  })
-
-  const subStep = (p, i, ii) => new Promise((resolve, reject) => {
-    if (ii === pathExt.length)
-      return resolve(step(i + 1))
-    const ext = pathExt[ii]
-    isexe(p + ext, { pathExt: pathExtExe }, (er, is) => {
-      if (!er && is) {
-        if (opt.all)
-          found.push(p + ext)
-        else
-          return resolve(p + ext)
-      }
-      return resolve(subStep(p, i, ii + 1))
-    })
-  })
-
-  return cb ? step(0).then(res => cb(null, res), cb) : step(0)
-}
-
-const whichSync = (cmd, opt) => {
-  opt = opt || {}
-
-  const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt)
-  const found = []
-
-  for (let i = 0; i < pathEnv.length; i ++) {
-    const ppRaw = pathEnv[i]
-    const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw
-
-    const pCmd = path.join(pathPart, cmd)
-    const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd
-      : pCmd
-
-    for (let j = 0; j < pathExt.length; j ++) {
-      const cur = p + pathExt[j]
-      try {
-        const is = isexe.sync(cur, { pathExt: pathExtExe })
-        if (is) {
-          if (opt.all)
-            found.push(cur)
-          else
-            return cur
-        }
-      } catch (ex) {}
-    }
-  }
-
-  if (opt.all && found.length)
-    return found
-
-  if (opt.nothrow)
-    return null
-
-  throw getNotFoundError(cmd)
-}
-
-module.exports = which
-which.sync = whichSync
-
+module.exports=function(e){var t={};function r(a){if(t[a])return t[a].exports;var n=t[a]={i:a,l:!1,exports:{}};return e[a].call(n.exports,n,n.exports,r),n.l=!0,n.exports}return r.m=e,r.c=t,r.d=function(e,t,a){r.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:a})},r.r=function(e){"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},r.t=function(e,t){if(1&t&&(e=r(e)),8&t)return e;if(4&t&&"object"==typeof e&&e&&e.__esModule)return e;var a=Object.create(null);if(r.r(a),Object.defineProperty(a,"default",{enumerable:!0,value:e}),2&t&&"string"!=typeof e)for(var n in e)r.d(a,n,function(t){return e[t]}.bind(null,n));return a},r.n=function(e){var t=e&&e.__esModule?function(){return e.default}:function(){return e};return r.d(t,"a",t),t},r.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},r.p="",r(r.s=2)}([function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(3)),i=r(7),o=r(5),s=r(11);t.validatorSymbol=Symbol("validators");t.Predicate=class{constructor(e,t={validators:[]}){this.type=e,this.context=t;const r=this.type[0].toLowerCase()+this.type.slice(1);this.addValidator({message:e=>`Expected ${this.context.label||"argument"} to be of type \`${this.type}\` but received type \`${n.default(e)}\``,validator:e=>n.default[r](e)})}[o.testSymbol](e,t){const r=this.context.label?`${this.type} ${this.context.label}`:this.type;for(const{validator:a,message:n}of this.context.validators){const o=a(e);if("boolean"!=typeof o||!o)throw new i.ArgumentError(n(e,r,o),t)}}get[t.validatorSymbol](){return this.context.validators}get not(){return s.not(this)}label(e){return this.context.label=`\`${e}\``,this}is(e){return this.addValidator({message:(e,t,r)=>r?`(${t}) ${r}`:`Expected ${t} \`${e}\` to pass custom validation function`,validator:t=>e(t)})}addValidator(e){return this.context.validators.push(e),this}}},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=((e,t,r=5)=>{const a=[];for(const n of t)if(!e.has(n)&&(a.push(n),a.length===r))return a;return 0===a.length||a})},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(0);t.Predicate=a.Predicate;const n=r(12);t.AnyPredicate=n.AnyPredicate;const i=r(5),o=r(13);t.StringPredicate=o.StringPredicate;const s=r(15);t.NumberPredicate=s.NumberPredicate;const d=r(16);t.BooleanPredicate=d.BooleanPredicate;const u=r(17);t.ArrayPredicate=u.ArrayPredicate;const l=r(19);t.ObjectPredicate=l.ObjectPredicate;const c=r(23);t.DatePredicate=c.DatePredicate;const f=r(24);t.ErrorPredicate=f.ErrorPredicate;const g=r(25);t.MapPredicate=g.MapPredicate;const p=r(26);t.WeakMapPredicate=p.WeakMapPredicate;const h=r(27);t.SetPredicate=h.SetPredicate;const y=r(28);t.WeakSetPredicate=y.WeakSetPredicate;const m=(e,t)=>t[i.testSymbol](e,m);Object.defineProperties(m,{isValid:{value:(e,t)=>{try{return m(e,t),!0}catch(e){return!1}}},create:{value:e=>t=>m(t,e)},any:{value:(...e)=>new n.AnyPredicate(e)},string:{get:()=>new o.StringPredicate},number:{get:()=>new s.NumberPredicate},boolean:{get:()=>new d.BooleanPredicate},undefined:{get:()=>new a.Predicate("undefined")},null:{get:()=>new a.Predicate("null")},nullOrUndefined:{get:()=>new a.Predicate("nullOrUndefined")},nan:{get:()=>new a.Predicate("nan")},symbol:{get:()=>new a.Predicate("symbol")},array:{get:()=>new u.ArrayPredicate},object:{get:()=>new l.ObjectPredicate},date:{get:()=>new c.DatePredicate},error:{get:()=>new f.ErrorPredicate},map:{get:()=>new g.MapPredicate},weakMap:{get:()=>new p.WeakMapPredicate},set:{get:()=>new h.SetPredicate},weakSet:{get:()=>new y.WeakSetPredicate},function:{get:()=>new a.Predicate("Function")},buffer:{get:()=>new a.Predicate("Buffer")},regExp:{get:()=>new a.Predicate("RegExp")},promise:{get:()=>new a.Predicate("Promise")},typedArray:{get:()=>new a.Predicate("TypedArray")},int8Array:{get:()=>new a.Predicate("Int8Array")},uint8Array:{get:()=>new a.Predicate("Uint8Array")},uint8ClampedArray:{get:()=>new a.Predicate("Uint8ClampedArray")},int16Array:{get:()=>new a.Predicate("Int16Array")},uint16Array:{get:()=>new a.Predicate("Uint16Array")},int32Array:{get:()=>new a.Predicate("Int32Array")},uint32Array:{get:()=>new a.Predicate("Uint32Array")},float32Array:{get:()=>new a.Predicate("Float32Array")},float64Array:{get:()=>new a.Predicate("Float64Array")},arrayBuffer:{get:()=>new a.Predicate("ArrayBuffer")},dataView:{get:()=>new a.Predicate("DataView")},iterable:{get:()=>new a.Predicate("Iterable")}}),t.default=m},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(9)),i=Object.prototype.toString,o=e=>t=>typeof t===e,s=e=>!l.nullOrUndefined(e)&&!l.nullOrUndefined(e.constructor)&&l.function_(e.constructor.isBuffer)&&e.constructor.isBuffer(e),d=e=>{const t=i.call(e).slice(8,-1);return t||null},u=e=>t=>d(t)===e;function l(e){switch(e){case null:return"null";case!0:case!1:return"boolean"}switch(typeof e){case"undefined":return"undefined";case"string":return"string";case"number":return"number";case"symbol":return"symbol"}if(l.function_(e))return"Function";if(l.observable(e))return"Observable";if(Array.isArray(e))return"Array";if(s(e))return"Buffer";const t=d(e);if(t)return t;if(e instanceof String||e instanceof Boolean||e instanceof Number)throw new TypeError("Please don't use object wrappers for primitive types");return"Object"}!function(e){const t=e=>"object"==typeof e;e.undefined=o("undefined"),e.string=o("string"),e.number=o("number"),e.function_=o("function"),e.null_=(e=>null===e),e.class_=(t=>e.function_(t)&&t.toString().startsWith("class ")),e.boolean=(e=>!0===e||!1===e),e.symbol=o("symbol"),e.array=Array.isArray,e.buffer=s,e.nullOrUndefined=(t=>e.null_(t)||e.undefined(t)),e.object=(r=>!e.nullOrUndefined(r)&&(e.function_(r)||t(r))),e.iterable=(t=>!e.nullOrUndefined(t)&&e.function_(t[Symbol.iterator])),e.asyncIterable=(t=>!e.nullOrUndefined(t)&&e.function_(t[Symbol.asyncIterator])),e.generator=(t=>e.iterable(t)&&e.function_(t.next)&&e.function_(t.throw)),e.nativePromise=(e=>u("Promise")(e));e.promise=(r=>e.nativePromise(r)||(r=>!e.null_(r)&&t(r)&&e.function_(r.then)&&e.function_(r.catch))(r)),e.generatorFunction=u("GeneratorFunction"),e.asyncFunction=u("AsyncFunction"),e.boundFunction=(t=>e.function_(t)&&!t.hasOwnProperty("prototype")),e.regExp=u("RegExp"),e.date=u("Date"),e.error=u("Error"),e.map=(e=>u("Map")(e)),e.set=(e=>u("Set")(e)),e.weakMap=(e=>u("WeakMap")(e)),e.weakSet=(e=>u("WeakSet")(e)),e.int8Array=u("Int8Array"),e.uint8Array=u("Uint8Array"),e.uint8ClampedArray=u("Uint8ClampedArray"),e.int16Array=u("Int16Array"),e.uint16Array=u("Uint16Array"),e.int32Array=u("Int32Array"),e.uint32Array=u("Uint32Array"),e.float32Array=u("Float32Array"),e.float64Array=u("Float64Array"),e.arrayBuffer=u("ArrayBuffer"),e.sharedArrayBuffer=u("SharedArrayBuffer"),e.dataView=u("DataView"),e.directInstanceOf=((e,t)=>Object.getPrototypeOf(e)===t.prototype),e.urlInstance=(e=>u("URL")(e)),e.truthy=(e=>Boolean(e)),e.falsy=(e=>!e),e.nan=(e=>Number.isNaN(e));const r=new Set(["undefined","string","number","boolean","symbol"]);e.primitive=(t=>e.null_(t)||r.has(typeof t)),e.integer=(e=>Number.isInteger(e)),e.safeInteger=(e=>Number.isSafeInteger(e)),e.plainObject=(e=>{let t;return"Object"===d(e)&&(null===(t=Object.getPrototypeOf(e))||t===Object.getPrototypeOf({}))});const a=new Set(["Int8Array","Uint8Array","Uint8ClampedArray","Int16Array","Uint16Array","Int32Array","Uint32Array","Float32Array","Float64Array"]);e.typedArray=(e=>{const t=d(e);return null!==t&&a.has(t)});e.arrayLike=(t=>!e.nullOrUndefined(t)&&!e.function_(t)&&(t=>e.safeInteger(t)&&t>-1)(t.length)),e.inRange=((t,r)=>{if(e.number(r))return t>=Math.min(0,r)&&t<=Math.max(r,0);if(e.array(r)&&2===r.length)return t>=Math.min(...r)&&t<=Math.max(...r);throw new TypeError(`Invalid range: ${JSON.stringify(r)}`)});const i=["innerHTML","ownerDocument","style","attributes","nodeValue"];e.domElement=(t=>e.object(t)&&1===t.nodeType&&e.string(t.nodeName)&&!e.plainObject(t)&&i.every(e=>e in t)),e.observable=(e=>Boolean(e&&e[n.default]&&e===e[n.default]())),e.nodeStream=(r=>!e.nullOrUndefined(r)&&t(r)&&e.function_(r.pipe)&&!e.observable(r)),e.infinite=(e=>e===1/0||e===-1/0);const l=t=>r=>e.integer(r)&&Math.abs(r%2)===t;e.even=l(0),e.odd=l(1);e.emptyArray=(t=>e.array(t)&&0===t.length),e.nonEmptyArray=(t=>e.array(t)&&t.length>0),e.emptyString=(t=>e.string(t)&&0===t.length),e.nonEmptyString=(t=>e.string(t)&&t.length>0),e.emptyStringOrWhitespace=(t=>e.emptyString(t)||(t=>e.string(t)&&!1===/\S/.test(t))(t)),e.emptyObject=(t=>e.object(t)&&!e.map(t)&&!e.set(t)&&0===Object.keys(t).length),e.nonEmptyObject=(t=>e.object(t)&&!e.map(t)&&!e.set(t)&&Object.keys(t).length>0),e.emptySet=(t=>e.set(t)&&0===t.size),e.nonEmptySet=(t=>e.set(t)&&t.size>0),e.emptyMap=(t=>e.map(t)&&0===t.size),e.nonEmptyMap=(t=>e.map(t)&&t.size>0);const c=(t,r,a)=>{if(!1===e.function_(r))throw new TypeError(`Invalid predicate: ${JSON.stringify(r)}`);if(0===a.length)throw new TypeError("Invalid number of values");return t.call(a,r)};e.any=((e,...t)=>c(Array.prototype.some,e,t)),e.all=((e,...t)=>c(Array.prototype.every,e,t))}(l||(l={})),Object.defineProperties(l,{class:{value:l.class_},function:{value:l.function_},null:{value:l.null_}}),t.default=l,e.exports=l,e.exports.default=l},function(e,t,r){(function(e){var r=200,a="__lodash_hash_undefined__",n=1,i=2,o=9007199254740991,s="[object Arguments]",d="[object Array]",u="[object AsyncFunction]",l="[object Boolean]",c="[object Date]",f="[object Error]",g="[object Function]",p="[object GeneratorFunction]",h="[object Map]",y="[object Number]",m="[object Null]",v="[object Object]",b="[object Proxy]",_="[object RegExp]",$="[object Set]",O="[object String]",x="[object Symbol]",P="[object Undefined]",E="[object ArrayBuffer]",j="[object DataView]",w=/^\[object .+?Constructor\]$/,A=/^(?:0|[1-9]\d*)$/,S={};S["[object Float32Array]"]=S["[object Float64Array]"]=S["[object Int8Array]"]=S["[object Int16Array]"]=S["[object Int32Array]"]=S["[object Uint8Array]"]=S["[object Uint8ClampedArray]"]=S["[object Uint16Array]"]=S["[object Uint32Array]"]=!0,S[s]=S[d]=S[E]=S[l]=S[j]=S[c]=S[f]=S[g]=S[h]=S[y]=S[v]=S[_]=S[$]=S[O]=S["[object WeakMap]"]=!1;var V="object"==typeof global&&global&&global.Object===Object&&global,M="object"==typeof self&&self&&self.Object===Object&&self,z=V||M||Function("return this")(),k="object"==typeof t&&t&&!t.nodeType&&t,N=k&&"object"==typeof e&&e&&!e.nodeType&&e,I=N&&N.exports===k,J=I&&V.process,T=function(){try{return J&&J.binding&&J.binding("util")}catch(e){}}(),U=T&&T.isTypedArray;function D(e,t){for(var r=-1,a=null==e?0:e.length;++r<a;)if(t(e[r],r,e))return!0;return!1}function W(e,t){return e.has(t)}function B(e){var t=-1,r=Array(e.size);return e.forEach(function(e,a){r[++t]=[a,e]}),r}function F(e){var t=-1,r=Array(e.size);return e.forEach(function(e){r[++t]=e}),r}var q=Array.prototype,L=Function.prototype,R=Object.prototype,C=z["__core-js_shared__"],K=L.toString,G=R.hasOwnProperty,H=function(){var e=/[^.]+$/.exec(C&&C.keys&&C.keys.IE_PROTO||"");return e?"Symbol(src)_1."+e:""}(),Q=R.toString,X=RegExp("^"+K.call(G).replace(/[\\^$.*+?()[\]{}|]/g,"\\$&").replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g,"$1.*?")+"$"),Y=I?z.Buffer:void 0,Z=z.Symbol,ee=z.Uint8Array,te=R.propertyIsEnumerable,re=q.splice,ae=Z?Z.toStringTag:void 0,ne=Object.getOwnPropertySymbols,ie=Y?Y.isBuffer:void 0,oe=function(e,t){return function(r){return e(t(r))}}(Object.keys,Object),se=Ie(z,"DataView"),de=Ie(z,"Map"),ue=Ie(z,"Promise"),le=Ie(z,"Set"),ce=Ie(z,"WeakMap"),fe=Ie(Object,"create"),ge=De(se),pe=De(de),he=De(ue),ye=De(le),me=De(ce),ve=Z?Z.prototype:void 0,be=ve?ve.valueOf:void 0;function _e(e){var t=-1,r=null==e?0:e.length;for(this.clear();++t<r;){var a=e[t];this.set(a[0],a[1])}}function $e(e){var t=-1,r=null==e?0:e.length;for(this.clear();++t<r;){var a=e[t];this.set(a[0],a[1])}}function Oe(e){var t=-1,r=null==e?0:e.length;for(this.clear();++t<r;){var a=e[t];this.set(a[0],a[1])}}function xe(e){var t=-1,r=null==e?0:e.length;for(this.__data__=new Oe;++t<r;)this.add(e[t])}function Pe(e){var t=this.__data__=new $e(e);this.size=t.size}function Ee(e,t){var r=Fe(e),a=!r&&Be(e),n=!r&&!a&&qe(e),i=!r&&!a&&!n&&Ge(e),o=r||a||n||i,s=o?function(e,t){for(var r=-1,a=Array(e);++r<e;)a[r]=t(r);return a}(e.length,String):[],d=s.length;for(var u in e)!t&&!G.call(e,u)||o&&("length"==u||n&&("offset"==u||"parent"==u)||i&&("buffer"==u||"byteLength"==u||"byteOffset"==u)||Ue(u,d))||s.push(u);return s}function je(e,t){for(var r=e.length;r--;)if(We(e[r][0],t))return r;return-1}function we(e){return null==e?void 0===e?P:m:ae&&ae in Object(e)?function(e){var t=G.call(e,ae),r=e[ae];try{e[ae]=void 0;var a=!0}catch(e){}var n=Q.call(e);a&&(t?e[ae]=r:delete e[ae]);return n}(e):function(e){return Q.call(e)}(e)}function Ae(e){return Ke(e)&&we(e)==s}function Se(e,t,r,a,o){return e===t||(null==e||null==t||!Ke(e)&&!Ke(t)?e!=e&&t!=t:function(e,t,r,a,o,u){var g=Fe(e),p=Fe(t),m=g?d:Te(e),b=p?d:Te(t),P=(m=m==s?v:m)==v,w=(b=b==s?v:b)==v,A=m==b;if(A&&qe(e)){if(!qe(t))return!1;g=!0,P=!1}if(A&&!P)return u||(u=new Pe),g||Ge(e)?ze(e,t,r,a,o,u):function(e,t,r,a,o,s,d){switch(r){case j:if(e.byteLength!=t.byteLength||e.byteOffset!=t.byteOffset)return!1;e=e.buffer,t=t.buffer;case E:return!(e.byteLength!=t.byteLength||!s(new ee(e),new ee(t)));case l:case c:case y:return We(+e,+t);case f:return e.name==t.name&&e.message==t.message;case _:case O:return e==t+"";case h:var u=B;case $:var g=a&n;if(u||(u=F),e.size!=t.size&&!g)return!1;var p=d.get(e);if(p)return p==t;a|=i,d.set(e,t);var m=ze(u(e),u(t),a,o,s,d);return d.delete(e),m;case x:if(be)return be.call(e)==be.call(t)}return!1}(e,t,m,r,a,o,u);if(!(r&n)){var S=P&&G.call(e,"__wrapped__"),V=w&&G.call(t,"__wrapped__");if(S||V){var M=S?e.value():e,z=V?t.value():t;return u||(u=new Pe),o(M,z,r,a,u)}}if(!A)return!1;return u||(u=new Pe),function(e,t,r,a,i,o){var s=r&n,d=ke(e),u=d.length,l=ke(t).length;if(u!=l&&!s)return!1;for(var c=u;c--;){var f=d[c];if(!(s?f in t:G.call(t,f)))return!1}var g=o.get(e);if(g&&o.get(t))return g==t;var p=!0;o.set(e,t),o.set(t,e);for(var h=s;++c<u;){f=d[c];var y=e[f],m=t[f];if(a)var v=s?a(m,y,f,t,e,o):a(y,m,f,e,t,o);if(!(void 0===v?y===m||i(y,m,r,a,o):v)){p=!1;break}h||(h="constructor"==f)}if(p&&!h){var b=e.constructor,_=t.constructor;b!=_&&"constructor"in e&&"constructor"in t&&!("function"==typeof b&&b instanceof b&&"function"==typeof _&&_ instanceof _)&&(p=!1)}return o.delete(e),o.delete(t),p}(e,t,r,a,o,u)}(e,t,r,a,Se,o))}function Ve(e){return!(!Ce(e)||function(e){return!!H&&H in e}(e))&&(Le(e)?X:w).test(De(e))}function Me(e){if(!function(e){var t=e&&e.constructor,r="function"==typeof t&&t.prototype||R;return e===r}(e))return oe(e);var t=[];for(var r in Object(e))G.call(e,r)&&"constructor"!=r&&t.push(r);return t}function ze(e,t,r,a,o,s){var d=r&n,u=e.length,l=t.length;if(u!=l&&!(d&&l>u))return!1;var c=s.get(e);if(c&&s.get(t))return c==t;var f=-1,g=!0,p=r&i?new xe:void 0;for(s.set(e,t),s.set(t,e);++f<u;){var h=e[f],y=t[f];if(a)var m=d?a(y,h,f,t,e,s):a(h,y,f,e,t,s);if(void 0!==m){if(m)continue;g=!1;break}if(p){if(!D(t,function(e,t){if(!W(p,t)&&(h===e||o(h,e,r,a,s)))return p.push(t)})){g=!1;break}}else if(h!==y&&!o(h,y,r,a,s)){g=!1;break}}return s.delete(e),s.delete(t),g}function ke(e){return function(e,t,r){var a=t(e);return Fe(e)?a:function(e,t){for(var r=-1,a=t.length,n=e.length;++r<a;)e[n+r]=t[r];return e}(a,r(e))}(e,He,Je)}function Ne(e,t){var r=e.__data__;return function(e){var t=typeof e;return"string"==t||"number"==t||"symbol"==t||"boolean"==t?"__proto__"!==e:null===e}(t)?r["string"==typeof t?"string":"hash"]:r.map}function Ie(e,t){var r=function(e,t){return null==e?void 0:e[t]}(e,t);return Ve(r)?r:void 0}_e.prototype.clear=function(){this.__data__=fe?fe(null):{},this.size=0},_e.prototype.delete=function(e){var t=this.has(e)&&delete this.__data__[e];return this.size-=t?1:0,t},_e.prototype.get=function(e){var t=this.__data__;if(fe){var r=t[e];return r===a?void 0:r}return G.call(t,e)?t[e]:void 0},_e.prototype.has=function(e){var t=this.__data__;return fe?void 0!==t[e]:G.call(t,e)},_e.prototype.set=function(e,t){var r=this.__data__;return this.size+=this.has(e)?0:1,r[e]=fe&&void 0===t?a:t,this},$e.prototype.clear=function(){this.__data__=[],this.size=0},$e.prototype.delete=function(e){var t=this.__data__,r=je(t,e);return!(r<0||(r==t.length-1?t.pop():re.call(t,r,1),--this.size,0))},$e.prototype.get=function(e){var t=this.__data__,r=je(t,e);return r<0?void 0:t[r][1]},$e.prototype.has=function(e){return je(this.__data__,e)>-1},$e.prototype.set=function(e,t){var r=this.__data__,a=je(r,e);return a<0?(++this.size,r.push([e,t])):r[a][1]=t,this},Oe.prototype.clear=function(){this.size=0,this.__data__={hash:new _e,map:new(de||$e),string:new _e}},Oe.prototype.delete=function(e){var t=Ne(this,e).delete(e);return this.size-=t?1:0,t},Oe.prototype.get=function(e){return Ne(this,e).get(e)},Oe.prototype.has=function(e){return Ne(this,e).has(e)},Oe.prototype.set=function(e,t){var r=Ne(this,e),a=r.size;return r.set(e,t),this.size+=r.size==a?0:1,this},xe.prototype.add=xe.prototype.push=function(e){return this.__data__.set(e,a),this},xe.prototype.has=function(e){return this.__data__.has(e)},Pe.prototype.clear=function(){this.__data__=new $e,this.size=0},Pe.prototype.delete=function(e){var t=this.__data__,r=t.delete(e);return this.size=t.size,r},Pe.prototype.get=function(e){return this.__data__.get(e)},Pe.prototype.has=function(e){return this.__data__.has(e)},Pe.prototype.set=function(e,t){var a=this.__data__;if(a instanceof $e){var n=a.__data__;if(!de||n.length<r-1)return n.push([e,t]),this.size=++a.size,this;a=this.__data__=new Oe(n)}return a.set(e,t),this.size=a.size,this};var Je=ne?function(e){return null==e?[]:(e=Object(e),function(e,t){for(var r=-1,a=null==e?0:e.length,n=0,i=[];++r<a;){var o=e[r];t(o,r,e)&&(i[n++]=o)}return i}(ne(e),function(t){return te.call(e,t)}))}:function(){return[]},Te=we;function Ue(e,t){return!!(t=null==t?o:t)&&("number"==typeof e||A.test(e))&&e>-1&&e%1==0&&e<t}function De(e){if(null!=e){try{return K.call(e)}catch(e){}try{return e+""}catch(e){}}return""}function We(e,t){return e===t||e!=e&&t!=t}(se&&Te(new se(new ArrayBuffer(1)))!=j||de&&Te(new de)!=h||ue&&"[object Promise]"!=Te(ue.resolve())||le&&Te(new le)!=$||ce&&"[object WeakMap]"!=Te(new ce))&&(Te=function(e){var t=we(e),r=t==v?e.constructor:void 0,a=r?De(r):"";if(a)switch(a){case ge:return j;case pe:return h;case he:return"[object Promise]";case ye:return $;case me:return"[object WeakMap]"}return t});var Be=Ae(function(){return arguments}())?Ae:function(e){return Ke(e)&&G.call(e,"callee")&&!te.call(e,"callee")},Fe=Array.isArray;var qe=ie||function(){return!1};function Le(e){if(!Ce(e))return!1;var t=we(e);return t==g||t==p||t==u||t==b}function Re(e){return"number"==typeof e&&e>-1&&e%1==0&&e<=o}function Ce(e){var t=typeof e;return null!=e&&("object"==t||"function"==t)}function Ke(e){return null!=e&&"object"==typeof e}var Ge=U?function(e){return function(t){return e(t)}}(U):function(e){return Ke(e)&&Re(e.length)&&!!S[we(e)]};function He(e){return function(e){return null!=e&&Re(e.length)&&!Le(e)}(e)?Ee(e):Me(e)}e.exports=function(e,t){return Se(e,t)}}).call(this,r(18)(e))},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.testSymbol=Symbol("test")},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(2));t.default=((e,t)=>{try{for(const r of e)n.default(r,t);return!0}catch(e){return e.message}})},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});t.ArgumentError=class extends Error{constructor(e,t){super(e),Error.captureStackTrace(this,t),this.name="ArgumentError"}}},function(e,t,r){"use strict";function a(e){var t,r=e.Symbol;return"function"==typeof r?r.observable?t=r.observable:(t=r("observable"),r.observable=t):t="@@observable",t}r.d(t,"a",function(){return a})},function(e,t,r){"use strict";r.r(t),function(e){var a,n=r(8);a="undefined"!=typeof self?self:"undefined"!=typeof window?window:"undefined"!=typeof global?global:e;var i=Object(n.a)(a);t.default=i}.call(this,r(10)(e))},function(e,t){e.exports=function(e){if(!e.webpackPolyfill){var t=Object.create(e);t.children||(t.children=[]),Object.defineProperty(t,"loaded",{enumerable:!0,get:function(){return t.l}}),Object.defineProperty(t,"id",{enumerable:!0,get:function(){return t.i}}),Object.defineProperty(t,"exports",{enumerable:!0}),t.webpackPolyfill=1}return t}},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(0);t.not=(e=>{const t=e.addValidator;return e.addValidator=(r=>{const n=r.validator,i=r.message;return r.message=((e,t)=>`[NOT] ${i(e,t)}`),r.validator=(e=>!n(e)),e[a.validatorSymbol].push(r),e.addValidator=t,e}),e})},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(7),n=r(5);t.AnyPredicate=class{constructor(e){this.predicates=e}[n.testSymbol](e,t){const r=["Any predicate failed with the following errors:"];for(const a of this.predicates)try{return void t(e,a)}catch(e){r.push(`- ${e.message}`)}throw new a.ArgumentError(r.join("\n"),t)}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(14)),i=r(0);t.StringPredicate=class extends i.Predicate{constructor(e){super("string",e)}length(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have length \`${e}\`, got \`${t}\``,validator:t=>t.length===e})}minLength(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a minimum length of \`${e}\`, got \`${t}\``,validator:t=>t.length>=e})}maxLength(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a maximum length of \`${e}\`, got \`${t}\``,validator:t=>t.length<=e})}matches(e){return this.addValidator({message:(t,r)=>`Expected ${r} to match \`${e}\`, got \`${t}\``,validator:t=>e.test(t)})}startsWith(e){return this.addValidator({message:(t,r)=>`Expected ${r} to start with \`${e}\`, got \`${t}\``,validator:t=>t.startsWith(e)})}endsWith(e){return this.addValidator({message:(t,r)=>`Expected ${r} to end with \`${e}\`, got \`${t}\``,validator:t=>t.endsWith(e)})}includes(e){return this.addValidator({message:(t,r)=>`Expected ${r} to include \`${e}\`, got \`${t}\``,validator:t=>t.includes(e)})}oneOf(e){return this.addValidator({message:(t,r)=>{let a=JSON.stringify(e);if(e.length>10){const t=e.length-10;a=JSON.stringify(e.slice(0,10)).replace(/]$/,`,…+${t} more]`)}return`Expected ${r} to be one of \`${a}\`, got \`${t}\``},validator:t=>e.includes(t)})}get empty(){return this.addValidator({message:(e,t)=>`Expected ${t} to be empty, got \`${e}\``,validator:e=>""===e})}get nonEmpty(){return this.addValidator({message:(e,t)=>`Expected ${t} to not be empty`,validator:e=>""!==e})}equals(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be equal to \`${e}\`, got \`${t}\``,validator:t=>t===e})}get alphanumeric(){return this.addValidator({message:(e,t)=>`Expected ${t} to be alphanumeric, got \`${e}\``,validator:e=>/^[a-z\d]+$/i.test(e)})}get alphabetical(){return this.addValidator({message:(e,t)=>`Expected ${t} to be alphabetical, got \`${e}\``,validator:e=>/^[a-z]+$/gi.test(e)})}get numeric(){return this.addValidator({message:(e,t)=>`Expected ${t} to be numeric, got \`${e}\``,validator:e=>/^\d+$/i.test(e)})}get date(){return this.addValidator({message:(e,t)=>`Expected ${t} to be a date, got \`${e}\``,validator:e=>n.default(e)})}get lowercase(){return this.addValidator({message:(e,t)=>`Expected ${t} to be lowercase, got \`${e}\``,validator:e=>""!==e.trim()&&e===e.toLowerCase()})}get uppercase(){return this.addValidator({message:(e,t)=>`Expected ${t} to be uppercase, got \`${e}\``,validator:e=>""!==e.trim()&&e===e.toUpperCase()})}}},function(e,t,r){"use strict";e.exports=function(e){return!isNaN(Date.parse(e))}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(3)),i=r(0);t.NumberPredicate=class extends i.Predicate{constructor(e){super("number",e)}inRange(e,t){return this.addValidator({message:(r,a)=>`Expected ${a} to be in range [${e}..${t}], got ${r}`,validator:r=>n.default.inRange(r,[e,t])})}greaterThan(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be greater than ${e}, got ${t}`,validator:t=>t>e})}greaterThanOrEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be greater than or equal to ${e}, got ${t}`,validator:t=>t>=e})}lessThan(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be less than ${e}, got ${t}`,validator:t=>t<e})}lessThanOrEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be less than or equal to ${e}, got ${t}`,validator:t=>t<=e})}equal(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be equal to ${e}, got ${t}`,validator:t=>t===e})}get integer(){return this.addValidator({message:(e,t)=>`Expected ${t} to be an integer, got ${e}`,validator:e=>n.default.integer(e)})}get finite(){return this.addValidator({message:(e,t)=>`Expected ${t} to be finite, got ${e}`,validator:e=>!n.default.infinite(e)})}get infinite(){return this.addValidator({message:(e,t)=>`Expected ${t} to be infinite, got ${e}`,validator:e=>n.default.infinite(e)})}get positive(){return this.addValidator({message:(e,t)=>`Expected ${t} to be positive, got ${e}`,validator:e=>e>0})}get negative(){return this.addValidator({message:(e,t)=>`Expected ${t} to be negative, got ${e}`,validator:e=>e<0})}get integerOrInfinite(){return this.addValidator({message:(e,t)=>`Expected ${t} to be an integer or infinite, got ${e}`,validator:e=>n.default.integer(e)||n.default.infinite(e)})}}},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(0);t.BooleanPredicate=class extends a.Predicate{constructor(e){super("boolean",e)}get true(){return this.addValidator({message:(e,t)=>`Expected ${t} to be true, got ${e}`,validator:e=>!0===e})}get false(){return this.addValidator({message:(e,t)=>`Expected ${t} to be false, got ${e}`,validator:e=>!1===e})}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(4)),i=a(r(2)),o=r(0);t.ArrayPredicate=class extends o.Predicate{constructor(e){super("array",e)}length(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have length \`${e}\`, got \`${t.length}\``,validator:t=>t.length===e})}minLength(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a minimum length of \`${e}\`, got \`${t.length}\``,validator:t=>t.length>=e})}maxLength(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a maximum length of \`${e}\`, got \`${t.length}\``,validator:t=>t.length<=e})}startsWith(e){return this.addValidator({message:(t,r)=>`Expected ${r} to start with \`${e}\`, got \`${t[0]}\``,validator:t=>t[0]===e})}endsWith(e){return this.addValidator({message:(t,r)=>`Expected ${r} to end with \`${e}\`, got \`${t[t.length-1]}\``,validator:t=>t[t.length-1]===e})}includes(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to include all elements of \`${JSON.stringify(e)}\`, got \`${JSON.stringify(t)}\``,validator:t=>e.every(e=>-1!==t.indexOf(e))})}includesAny(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to include any element of \`${JSON.stringify(e)}\`, got \`${JSON.stringify(t)}\``,validator:t=>e.some(e=>-1!==t.indexOf(e))})}get empty(){return this.addValidator({message:(e,t)=>`Expected ${t} to be empty, got \`${JSON.stringify(e)}\``,validator:e=>0===e.length})}get nonEmpty(){return this.addValidator({message:(e,t)=>`Expected ${t} to not be empty`,validator:e=>e.length>0})}deepEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be deeply equal to \`${JSON.stringify(e)}\`, got \`${JSON.stringify(t)}\``,validator:t=>n.default(t,e)})}ofType(e){let t;return this.addValidator({message:(e,r)=>`(${r}) ${t}`,validator:r=>{try{for(const t of r)i.default(t,e);return!0}catch(e){return t=e.message,!1}}})}}},function(e,t){e.exports=function(e){return e.webpackPolyfill||(e.deprecate=function(){},e.paths=[],e.children||(e.children=[]),Object.defineProperty(e,"loaded",{enumerable:!0,get:function(){return e.l}}),Object.defineProperty(e,"id",{enumerable:!0,get:function(){return e.i}}),e.webpackPolyfill=1),e}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(3)),i=a(r(20)),o=a(r(4)),s=r(0),d=a(r(1)),u=a(r(6)),l=a(r(22));t.ObjectPredicate=class extends s.Predicate{constructor(e){super("object",e)}get plain(){return this.addValidator({message:(e,t)=>`Expected ${t} to be a plain object`,validator:e=>n.default.plainObject(e)})}get empty(){return this.addValidator({message:(e,t)=>`Expected ${t} to be empty, got \`${JSON.stringify(e)}\``,validator:e=>0===Object.keys(e).length})}get nonEmpty(){return this.addValidator({message:(e,t)=>`Expected ${t} to not be empty`,validator:e=>Object.keys(e).length>0})}valuesOfType(e){return this.addValidator({message:(e,t,r)=>`(${t}) ${r}`,validator:t=>{const r=Object.keys(t).map(e=>t[e]);return u.default(r,e)}})}deepValuesOfType(e){return this.addValidator({message:(e,t,r)=>`(${t}) ${r}`,validator:t=>l.default(t,e)})}deepEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be deeply equal to \`${JSON.stringify(e)}\`, got \`${JSON.stringify(t)}\``,validator:t=>o.default(t,e)})}instanceOf(e){return this.addValidator({message:(t,r)=>{let a=t.constructor.name;return a&&"Object"!==a||(a=JSON.stringify(t)),`Expected ${r} \`${a}\` to be of type \`${e.name}\``},validator:t=>t instanceof e})}hasKeys(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have keys \`${JSON.stringify(r)}\``,validator:t=>d.default({has:e=>i.default.has(t,e)},e)})}hasAnyKeys(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any key of \`${JSON.stringify(e)}\``,validator:t=>e.some(e=>i.default.has(t,e))})}}},function(e,t,r){"use strict";const a=r(21);function n(e){const t=e.split("."),r=[];for(let e=0;e<t.length;e++){let a=t[e];for(;"\\"===a[a.length-1]&&void 0!==t[e+1];)a=a.slice(0,-1)+".",a+=t[++e];r.push(a)}return r}e.exports={get(e,t,r){if(!a(e)||"string"!=typeof t)return void 0===r?e:r;const i=n(t);for(let t=0;t<i.length;t++){if(!Object.prototype.propertyIsEnumerable.call(e,i[t]))return r;if(void 0===(e=e[i[t]])||null===e){if(t!==i.length-1)return r;break}}return e},set(e,t,r){if(!a(e)||"string"!=typeof t)return e;const i=e,o=n(t);for(let t=0;t<o.length;t++){const n=o[t];a(e[n])||(e[n]={}),t===o.length-1&&(e[n]=r),e=e[n]}return i},delete(e,t){if(!a(e)||"string"!=typeof t)return;const r=n(t);for(let t=0;t<r.length;t++){const n=r[t];if(t===r.length-1)return void delete e[n];if(e=e[n],!a(e))return}},has(e,t){if(!a(e)||"string"!=typeof t)return!1;const r=n(t);for(let t=0;t<r.length;t++){if(!a(e))return!1;if(!(r[t]in e))return!1;e=e[r[t]]}return!0}}},function(e,t,r){"use strict";e.exports=function(e){var t=typeof e;return null!==e&&("object"===t||"function"===t)}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(3)),i=a(r(2)),o=(e,t)=>n.default.plainObject(e)?Object.keys(e).every(r=>o(e[r],t)):(i.default(e,t),!0);t.default=((e,t)=>{try{return o(e,t)}catch(e){return e.message}})},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(0);t.DatePredicate=class extends a.Predicate{constructor(e){super("date",e)}before(e){return this.addValidator({message:(t,r)=>`Expected ${r} ${t.toISOString()} to be before ${e.toISOString()}`,validator:t=>t.getTime()<e.getTime()})}after(e){return this.addValidator({message:(t,r)=>`Expected ${r} ${t.toISOString()} to be after ${e.toISOString()}`,validator:t=>t.getTime()>e.getTime()})}}},function(e,t,r){"use strict";Object.defineProperty(t,"__esModule",{value:!0});const a=r(0);t.ErrorPredicate=class extends a.Predicate{constructor(e){super("error",e)}name(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have name \`${e}\`, got \`${t.name}\``,validator:t=>t.name===e})}message(e){return this.addValidator({message:(t,r)=>`Expected ${r} message to be \`${e}\`, got \`${t.message}\``,validator:t=>t.message===e})}messageIncludes(e){return this.addValidator({message:(t,r)=>`Expected ${r} message to include \`${e}\`, got \`${t.message}\``,validator:t=>t.message.includes(e)})}hasKeys(...e){return this.addValidator({message:(t,r)=>`Expected ${r} message to have keys \`${e.join("`, `")}\``,validator:t=>e.every(e=>t.hasOwnProperty(e))})}instanceOf(e){return this.addValidator({message:(t,r)=>`Expected ${r} \`${t.name}\` to be of type \`${e.name}\``,validator:t=>t instanceof e})}get typeError(){return this.instanceOf(TypeError)}get evalError(){return this.instanceOf(EvalError)}get rangeError(){return this.instanceOf(RangeError)}get referenceError(){return this.instanceOf(ReferenceError)}get syntaxError(){return this.instanceOf(SyntaxError)}get uriError(){return this.instanceOf(URIError)}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(4)),i=r(0),o=a(r(1)),s=a(r(6));t.MapPredicate=class extends i.Predicate{constructor(e){super("Map",e)}size(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have size \`${e}\`, got \`${t.size}\``,validator:t=>t.size===e})}minSize(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a minimum size of \`${e}\`, got \`${t.size}\``,validator:t=>t.size>=e})}maxSize(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a maximum size of \`${e}\`, got \`${t.size}\``,validator:t=>t.size<=e})}hasKeys(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have keys \`${JSON.stringify(r)}\``,validator:t=>o.default(t,e)})}hasAnyKeys(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any key of \`${JSON.stringify(e)}\``,validator:t=>e.some(e=>t.has(e))})}hasValues(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have values \`${JSON.stringify(r)}\``,validator:t=>o.default(new Set(t.values()),e)})}hasAnyValues(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any value of \`${JSON.stringify(e)}\``,validator:t=>{const r=new Set(t.values());return e.some(e=>r.has(e))}})}keysOfType(e){return this.addValidator({message:(e,t,r)=>`(${t}) ${r}`,validator:t=>s.default(t.keys(),e)})}valuesOfType(e){return this.addValidator({message:(e,t,r)=>`(${t}) ${r}`,validator:t=>s.default(t.values(),e)})}get empty(){return this.addValidator({message:(e,t)=>`Expected ${t} to be empty, got \`${JSON.stringify(Array.from(e))}\``,validator:e=>0===e.size})}get nonEmpty(){return this.addValidator({message:(e,t)=>`Expected ${t} to not be empty`,validator:e=>e.size>0})}deepEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be deeply equal to \`${JSON.stringify(Array.from(e))}\`, got \`${JSON.stringify(Array.from(t))}\``,validator:t=>n.default(t,e)})}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=r(0),i=a(r(1));t.WeakMapPredicate=class extends n.Predicate{constructor(e){super("WeakMap",e)}hasKeys(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have keys \`${JSON.stringify(r)}\``,validator:t=>i.default(t,e)})}hasAnyKeys(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any key of \`${JSON.stringify(e)}\``,validator:t=>e.some(e=>t.has(e))})}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=a(r(4)),i=r(0),o=a(r(1)),s=a(r(6));t.SetPredicate=class extends i.Predicate{constructor(e){super("Set",e)}size(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have size \`${e}\`, got \`${t.size}\``,validator:t=>t.size===e})}minSize(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a minimum size of \`${e}\`, got \`${t.size}\``,validator:t=>t.size>=e})}maxSize(e){return this.addValidator({message:(t,r)=>`Expected ${r} to have a maximum size of \`${e}\`, got \`${t.size}\``,validator:t=>t.size<=e})}has(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have items \`${JSON.stringify(r)}\``,validator:t=>o.default(t,e)})}hasAny(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any item of \`${JSON.stringify(e)}\``,validator:t=>e.some(e=>t.has(e))})}ofType(e){return this.addValidator({message:(e,t,r)=>`(${t}) ${r}`,validator:t=>s.default(t,e)})}get empty(){return this.addValidator({message:(e,t)=>`Expected ${t} to be empty, got \`${JSON.stringify(Array.from(e))}\``,validator:e=>0===e.size})}get nonEmpty(){return this.addValidator({message:(e,t)=>`Expected ${t} to not be empty`,validator:e=>e.size>0})}deepEqual(e){return this.addValidator({message:(t,r)=>`Expected ${r} to be deeply equal to \`${JSON.stringify(Array.from(e))}\`, got \`${JSON.stringify(Array.from(t))}\``,validator:t=>n.default(t,e)})}}},function(e,t,r){"use strict";var a=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(t,"__esModule",{value:!0});const n=r(0),i=a(r(1));t.WeakSetPredicate=class extends n.Predicate{constructor(e){super("WeakSet",e)}has(...e){return this.addValidator({message:(e,t,r)=>`Expected ${t} to have items \`${JSON.stringify(r)}\``,validator:t=>i.default(t,e)})}hasAny(...e){return this.addValidator({message:(t,r)=>`Expected ${r} to have any item of \`${JSON.stringify(e)}\``,validator:t=>e.some(e=>t.has(e))})}}}]);const __export__=module.exports.default;module.exports=__export__,module.exports["default"]=__export__;
+//# sourceMappingURL=index.js.map
 
 /***/ }),
 
@@ -100635,6 +101222,23 @@ module.exports = function isGlob(str, options) {
 
 /***/ }),
 
+/***/ 97918:
+/***/ ((module) => {
+
+
+module.exports = buffer => {
+	if (!buffer || buffer.length < 3) {
+		return false;
+	}
+
+	return buffer[0] === 255 &&
+		buffer[1] === 216 &&
+		buffer[2] === 255;
+};
+
+
+/***/ }),
+
 /***/ 36834:
 /***/ ((module) => {
 
@@ -100719,6 +101323,28 @@ var toString = Object.prototype.toString;
 module.exports = function (x) {
 	var prototype;
 	return toString.call(x) === '[object Object]' && (prototype = Object.getPrototypeOf(x), prototype === null || prototype === Object.getPrototypeOf({}));
+};
+
+
+/***/ }),
+
+/***/ 8594:
+/***/ ((module) => {
+
+
+module.exports = function (buf) {
+	if (!buf || buf.length < 8) {
+		return false;
+	}
+
+	return buf[0] === 137 &&
+		buf[1] === 80 &&
+		buf[2] === 78 &&
+		buf[3] === 71 &&
+		buf[4] === 13 &&
+		buf[5] === 10 &&
+		buf[6] === 26 &&
+		buf[7] === 10;
 };
 
 
@@ -101080,6 +101706,43 @@ isURL.lenient = url =>
 
 
 module.exports = isURL;
+
+
+/***/ }),
+
+/***/ 28551:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+module.exports = (__nccwpck_require__(63447).path)();
+
+
+/***/ }),
+
+/***/ 63447:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const path = __nccwpck_require__(16928);
+const BinWrapper = __nccwpck_require__(27791);
+const pkg = __nccwpck_require__(15337);
+
+const url = `https://raw.githubusercontent.com/imagemin/jpegtran-bin/v${pkg.version}/vendor/`;
+
+module.exports = new BinWrapper()
+	.src(`${url}macos/jpegtran`, 'darwin')
+	.src(`${url}linux/x86/jpegtran`, 'linux', 'x86')
+	.src(`${url}linux/x64/jpegtran`, 'linux', 'x64')
+	.src(`${url}freebsd/x86/jpegtran`, 'freebsd', 'x86')
+	.src(`${url}freebsd/x64/jpegtran`, 'freebsd', 'x64')
+	.src(`${url}sunos/x86/jpegtran`, 'sunos', 'x86')
+	.src(`${url}sunos/x64/jpegtran`, 'sunos', 'x64')
+	.src(`${url}win/x86/jpegtran.exe`, 'win32', 'x86')
+	.src(`${url}win/x64/jpegtran.exe`, 'win32', 'x64')
+	.src(`${url}win/x86/libjpeg-62.dll`, 'win32', 'x86')
+	.src(`${url}win/x64/libjpeg-62.dll`, 'win32', 'x64')
+	.dest(__nccwpck_require__.ab + "vendor1")
+	.use(process.platform === 'win32' ? 'jpegtran.exe' : 'jpegtran');
 
 
 /***/ }),
@@ -122714,6 +123377,481 @@ module.exports = function (obj) {
 
 /***/ }),
 
+/***/ 42762:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+module.exports = LRUCache
+
+// This will be a proper iterable 'Map' in engines that support it,
+// or a fakey-fake PseudoMap in older versions.
+var Map = __nccwpck_require__(97814)
+var util = __nccwpck_require__(39023)
+
+// A linked list to keep track of recently-used-ness
+var Yallist = __nccwpck_require__(17864)
+
+// use symbols if possible, otherwise just _props
+var hasSymbol = typeof Symbol === 'function' && process.env._nodeLRUCacheForceNoSymbol !== '1'
+var makeSymbol
+if (hasSymbol) {
+  makeSymbol = function (key) {
+    return Symbol(key)
+  }
+} else {
+  makeSymbol = function (key) {
+    return '_' + key
+  }
+}
+
+var MAX = makeSymbol('max')
+var LENGTH = makeSymbol('length')
+var LENGTH_CALCULATOR = makeSymbol('lengthCalculator')
+var ALLOW_STALE = makeSymbol('allowStale')
+var MAX_AGE = makeSymbol('maxAge')
+var DISPOSE = makeSymbol('dispose')
+var NO_DISPOSE_ON_SET = makeSymbol('noDisposeOnSet')
+var LRU_LIST = makeSymbol('lruList')
+var CACHE = makeSymbol('cache')
+
+function naiveLength () { return 1 }
+
+// lruList is a yallist where the head is the youngest
+// item, and the tail is the oldest.  the list contains the Hit
+// objects as the entries.
+// Each Hit object has a reference to its Yallist.Node.  This
+// never changes.
+//
+// cache is a Map (or PseudoMap) that matches the keys to
+// the Yallist.Node object.
+function LRUCache (options) {
+  if (!(this instanceof LRUCache)) {
+    return new LRUCache(options)
+  }
+
+  if (typeof options === 'number') {
+    options = { max: options }
+  }
+
+  if (!options) {
+    options = {}
+  }
+
+  var max = this[MAX] = options.max
+  // Kind of weird to have a default max of Infinity, but oh well.
+  if (!max ||
+      !(typeof max === 'number') ||
+      max <= 0) {
+    this[MAX] = Infinity
+  }
+
+  var lc = options.length || naiveLength
+  if (typeof lc !== 'function') {
+    lc = naiveLength
+  }
+  this[LENGTH_CALCULATOR] = lc
+
+  this[ALLOW_STALE] = options.stale || false
+  this[MAX_AGE] = options.maxAge || 0
+  this[DISPOSE] = options.dispose
+  this[NO_DISPOSE_ON_SET] = options.noDisposeOnSet || false
+  this.reset()
+}
+
+// resize the cache when the max changes.
+Object.defineProperty(LRUCache.prototype, 'max', {
+  set: function (mL) {
+    if (!mL || !(typeof mL === 'number') || mL <= 0) {
+      mL = Infinity
+    }
+    this[MAX] = mL
+    trim(this)
+  },
+  get: function () {
+    return this[MAX]
+  },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'allowStale', {
+  set: function (allowStale) {
+    this[ALLOW_STALE] = !!allowStale
+  },
+  get: function () {
+    return this[ALLOW_STALE]
+  },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'maxAge', {
+  set: function (mA) {
+    if (!mA || !(typeof mA === 'number') || mA < 0) {
+      mA = 0
+    }
+    this[MAX_AGE] = mA
+    trim(this)
+  },
+  get: function () {
+    return this[MAX_AGE]
+  },
+  enumerable: true
+})
+
+// resize the cache when the lengthCalculator changes.
+Object.defineProperty(LRUCache.prototype, 'lengthCalculator', {
+  set: function (lC) {
+    if (typeof lC !== 'function') {
+      lC = naiveLength
+    }
+    if (lC !== this[LENGTH_CALCULATOR]) {
+      this[LENGTH_CALCULATOR] = lC
+      this[LENGTH] = 0
+      this[LRU_LIST].forEach(function (hit) {
+        hit.length = this[LENGTH_CALCULATOR](hit.value, hit.key)
+        this[LENGTH] += hit.length
+      }, this)
+    }
+    trim(this)
+  },
+  get: function () { return this[LENGTH_CALCULATOR] },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'length', {
+  get: function () { return this[LENGTH] },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'itemCount', {
+  get: function () { return this[LRU_LIST].length },
+  enumerable: true
+})
+
+LRUCache.prototype.rforEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this[LRU_LIST].tail; walker !== null;) {
+    var prev = walker.prev
+    forEachStep(this, fn, walker, thisp)
+    walker = prev
+  }
+}
+
+function forEachStep (self, fn, node, thisp) {
+  var hit = node.value
+  if (isStale(self, hit)) {
+    del(self, node)
+    if (!self[ALLOW_STALE]) {
+      hit = undefined
+    }
+  }
+  if (hit) {
+    fn.call(thisp, hit.value, hit.key, self)
+  }
+}
+
+LRUCache.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this[LRU_LIST].head; walker !== null;) {
+    var next = walker.next
+    forEachStep(this, fn, walker, thisp)
+    walker = next
+  }
+}
+
+LRUCache.prototype.keys = function () {
+  return this[LRU_LIST].toArray().map(function (k) {
+    return k.key
+  }, this)
+}
+
+LRUCache.prototype.values = function () {
+  return this[LRU_LIST].toArray().map(function (k) {
+    return k.value
+  }, this)
+}
+
+LRUCache.prototype.reset = function () {
+  if (this[DISPOSE] &&
+      this[LRU_LIST] &&
+      this[LRU_LIST].length) {
+    this[LRU_LIST].forEach(function (hit) {
+      this[DISPOSE](hit.key, hit.value)
+    }, this)
+  }
+
+  this[CACHE] = new Map() // hash of items by key
+  this[LRU_LIST] = new Yallist() // list of items in order of use recency
+  this[LENGTH] = 0 // length of items in the list
+}
+
+LRUCache.prototype.dump = function () {
+  return this[LRU_LIST].map(function (hit) {
+    if (!isStale(this, hit)) {
+      return {
+        k: hit.key,
+        v: hit.value,
+        e: hit.now + (hit.maxAge || 0)
+      }
+    }
+  }, this).toArray().filter(function (h) {
+    return h
+  })
+}
+
+LRUCache.prototype.dumpLru = function () {
+  return this[LRU_LIST]
+}
+
+/* istanbul ignore next */
+LRUCache.prototype.inspect = function (n, opts) {
+  var str = 'LRUCache {'
+  var extras = false
+
+  var as = this[ALLOW_STALE]
+  if (as) {
+    str += '\n  allowStale: true'
+    extras = true
+  }
+
+  var max = this[MAX]
+  if (max && max !== Infinity) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  max: ' + util.inspect(max, opts)
+    extras = true
+  }
+
+  var maxAge = this[MAX_AGE]
+  if (maxAge) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  maxAge: ' + util.inspect(maxAge, opts)
+    extras = true
+  }
+
+  var lc = this[LENGTH_CALCULATOR]
+  if (lc && lc !== naiveLength) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  length: ' + util.inspect(this[LENGTH], opts)
+    extras = true
+  }
+
+  var didFirst = false
+  this[LRU_LIST].forEach(function (item) {
+    if (didFirst) {
+      str += ',\n  '
+    } else {
+      if (extras) {
+        str += ',\n'
+      }
+      didFirst = true
+      str += '\n  '
+    }
+    var key = util.inspect(item.key).split('\n').join('\n  ')
+    var val = { value: item.value }
+    if (item.maxAge !== maxAge) {
+      val.maxAge = item.maxAge
+    }
+    if (lc !== naiveLength) {
+      val.length = item.length
+    }
+    if (isStale(this, item)) {
+      val.stale = true
+    }
+
+    val = util.inspect(val, opts).split('\n').join('\n  ')
+    str += key + ' => ' + val
+  })
+
+  if (didFirst || extras) {
+    str += '\n'
+  }
+  str += '}'
+
+  return str
+}
+
+LRUCache.prototype.set = function (key, value, maxAge) {
+  maxAge = maxAge || this[MAX_AGE]
+
+  var now = maxAge ? Date.now() : 0
+  var len = this[LENGTH_CALCULATOR](value, key)
+
+  if (this[CACHE].has(key)) {
+    if (len > this[MAX]) {
+      del(this, this[CACHE].get(key))
+      return false
+    }
+
+    var node = this[CACHE].get(key)
+    var item = node.value
+
+    // dispose of the old one before overwriting
+    // split out into 2 ifs for better coverage tracking
+    if (this[DISPOSE]) {
+      if (!this[NO_DISPOSE_ON_SET]) {
+        this[DISPOSE](key, item.value)
+      }
+    }
+
+    item.now = now
+    item.maxAge = maxAge
+    item.value = value
+    this[LENGTH] += len - item.length
+    item.length = len
+    this.get(key)
+    trim(this)
+    return true
+  }
+
+  var hit = new Entry(key, value, len, now, maxAge)
+
+  // oversized objects fall out of cache automatically.
+  if (hit.length > this[MAX]) {
+    if (this[DISPOSE]) {
+      this[DISPOSE](key, value)
+    }
+    return false
+  }
+
+  this[LENGTH] += hit.length
+  this[LRU_LIST].unshift(hit)
+  this[CACHE].set(key, this[LRU_LIST].head)
+  trim(this)
+  return true
+}
+
+LRUCache.prototype.has = function (key) {
+  if (!this[CACHE].has(key)) return false
+  var hit = this[CACHE].get(key).value
+  if (isStale(this, hit)) {
+    return false
+  }
+  return true
+}
+
+LRUCache.prototype.get = function (key) {
+  return get(this, key, true)
+}
+
+LRUCache.prototype.peek = function (key) {
+  return get(this, key, false)
+}
+
+LRUCache.prototype.pop = function () {
+  var node = this[LRU_LIST].tail
+  if (!node) return null
+  del(this, node)
+  return node.value
+}
+
+LRUCache.prototype.del = function (key) {
+  del(this, this[CACHE].get(key))
+}
+
+LRUCache.prototype.load = function (arr) {
+  // reset the cache
+  this.reset()
+
+  var now = Date.now()
+  // A previous serialized cache has the most recent items first
+  for (var l = arr.length - 1; l >= 0; l--) {
+    var hit = arr[l]
+    var expiresAt = hit.e || 0
+    if (expiresAt === 0) {
+      // the item was created without expiration in a non aged cache
+      this.set(hit.k, hit.v)
+    } else {
+      var maxAge = expiresAt - now
+      // dont add already expired items
+      if (maxAge > 0) {
+        this.set(hit.k, hit.v, maxAge)
+      }
+    }
+  }
+}
+
+LRUCache.prototype.prune = function () {
+  var self = this
+  this[CACHE].forEach(function (value, key) {
+    get(self, key, false)
+  })
+}
+
+function get (self, key, doUse) {
+  var node = self[CACHE].get(key)
+  if (node) {
+    var hit = node.value
+    if (isStale(self, hit)) {
+      del(self, node)
+      if (!self[ALLOW_STALE]) hit = undefined
+    } else {
+      if (doUse) {
+        self[LRU_LIST].unshiftNode(node)
+      }
+    }
+    if (hit) hit = hit.value
+  }
+  return hit
+}
+
+function isStale (self, hit) {
+  if (!hit || (!hit.maxAge && !self[MAX_AGE])) {
+    return false
+  }
+  var stale = false
+  var diff = Date.now() - hit.now
+  if (hit.maxAge) {
+    stale = diff > hit.maxAge
+  } else {
+    stale = self[MAX_AGE] && (diff > self[MAX_AGE])
+  }
+  return stale
+}
+
+function trim (self) {
+  if (self[LENGTH] > self[MAX]) {
+    for (var walker = self[LRU_LIST].tail;
+      self[LENGTH] > self[MAX] && walker !== null;) {
+      // We know that we're about to delete this one, and also
+      // what the next least recently used key will be, so just
+      // go ahead and set it now.
+      var prev = walker.prev
+      del(self, walker)
+      walker = prev
+    }
+  }
+}
+
+function del (self, node) {
+  if (node) {
+    var hit = node.value
+    if (self[DISPOSE]) {
+      self[DISPOSE](hit.key, hit.value)
+    }
+    self[LENGTH] -= hit.length
+    self[CACHE].delete(hit.key)
+    self[LRU_LIST].removeNode(node)
+  }
+}
+
+// classy, since V8 prefers predictable objects.
+function Entry (key, value, length, now, maxAge) {
+  this.key = key
+  this.value = value
+  this.length = length
+  this.now = now
+  this.maxAge = maxAge || 0
+}
+
+
+/***/ }),
+
 /***/ 36512:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -123413,54 +124551,6 @@ module.exports = function sign(number) {
   };
 
 })();
-
-
-/***/ }),
-
-/***/ 98595:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const { PassThrough } = __nccwpck_require__(2203);
-
-module.exports = function (/*streams...*/) {
-  var sources = []
-  var output  = new PassThrough({objectMode: true})
-
-  output.setMaxListeners(0)
-
-  output.add = add
-  output.isEmpty = isEmpty
-
-  output.on('unpipe', remove)
-
-  Array.prototype.slice.call(arguments).forEach(add)
-
-  return output
-
-  function add (source) {
-    if (Array.isArray(source)) {
-      source.forEach(add)
-      return this
-    }
-
-    sources.push(source);
-    source.once('end', remove.bind(null, source))
-    source.once('error', output.emit.bind(output, 'error'))
-    source.pipe(output, {end: false})
-    return this
-  }
-
-  function isEmpty () {
-    return sources.length == 0;
-  }
-
-  function remove (source) {
-    sources = sources.filter(function (it) { return it !== source })
-    if (!sources.length && output.readable) { output.end() }
-  }
-}
 
 
 /***/ }),
@@ -144985,6 +146075,37 @@ Promise.reject = function (reason) {
 };
 
 module.exports = Promise;
+
+
+/***/ }),
+
+/***/ 36850:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+module.exports = (__nccwpck_require__(36582).path)();
+
+
+/***/ }),
+
+/***/ 36582:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const path = __nccwpck_require__(16928);
+const BinWrapper = __nccwpck_require__(27791);
+const pkg = __nccwpck_require__(51604);
+
+const url = `https://raw.githubusercontent.com/imagemin/pngquant-bin/v${pkg.version}/vendor/`;
+
+module.exports = new BinWrapper()
+	.src(`${url}macos/pngquant`, 'darwin')
+	.src(`${url}linux/x86/pngquant`, 'linux', 'x86')
+	.src(`${url}linux/x64/pngquant`, 'linux', 'x64')
+	.src(`${url}freebsd/x64/pngquant`, 'freebsd', 'x64')
+	.src(`${url}win/pngquant.exe`, 'win32')
+	.dest(__nccwpck_require__.ab + "vendor2")
+	.use(process.platform === 'win32' ? 'pngquant.exe' : 'pngquant');
 
 
 /***/ }),
@@ -194412,6 +195533,142 @@ ProtoList.prototype =
 
 /***/ }),
 
+/***/ 97814:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+if (process.env.npm_package_name === 'pseudomap' &&
+    process.env.npm_lifecycle_script === 'test')
+  process.env.TEST_PSEUDOMAP = 'true'
+
+if (typeof Map === 'function' && !process.env.TEST_PSEUDOMAP) {
+  module.exports = Map
+} else {
+  module.exports = __nccwpck_require__(50288)
+}
+
+
+/***/ }),
+
+/***/ 50288:
+/***/ ((module) => {
+
+var hasOwnProperty = Object.prototype.hasOwnProperty
+
+module.exports = PseudoMap
+
+function PseudoMap (set) {
+  if (!(this instanceof PseudoMap)) // whyyyyyyy
+    throw new TypeError("Constructor PseudoMap requires 'new'")
+
+  this.clear()
+
+  if (set) {
+    if ((set instanceof PseudoMap) ||
+        (typeof Map === 'function' && set instanceof Map))
+      set.forEach(function (value, key) {
+        this.set(key, value)
+      }, this)
+    else if (Array.isArray(set))
+      set.forEach(function (kv) {
+        this.set(kv[0], kv[1])
+      }, this)
+    else
+      throw new TypeError('invalid argument')
+  }
+}
+
+PseudoMap.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  Object.keys(this._data).forEach(function (k) {
+    if (k !== 'size')
+      fn.call(thisp, this._data[k].value, this._data[k].key)
+  }, this)
+}
+
+PseudoMap.prototype.has = function (k) {
+  return !!find(this._data, k)
+}
+
+PseudoMap.prototype.get = function (k) {
+  var res = find(this._data, k)
+  return res && res.value
+}
+
+PseudoMap.prototype.set = function (k, v) {
+  set(this._data, k, v)
+}
+
+PseudoMap.prototype.delete = function (k) {
+  var res = find(this._data, k)
+  if (res) {
+    delete this._data[res._index]
+    this._data.size--
+  }
+}
+
+PseudoMap.prototype.clear = function () {
+  var data = Object.create(null)
+  data.size = 0
+
+  Object.defineProperty(this, '_data', {
+    value: data,
+    enumerable: false,
+    configurable: true,
+    writable: false
+  })
+}
+
+Object.defineProperty(PseudoMap.prototype, 'size', {
+  get: function () {
+    return this._data.size
+  },
+  set: function (n) {},
+  enumerable: true,
+  configurable: true
+})
+
+PseudoMap.prototype.values =
+PseudoMap.prototype.keys =
+PseudoMap.prototype.entries = function () {
+  throw new Error('iterators are not implemented in this version')
+}
+
+// Either identical, or both NaN
+function same (a, b) {
+  return a === b || a !== a && b !== b
+}
+
+function Entry (k, v, i) {
+  this.key = k
+  this.value = v
+  this._index = i
+}
+
+function find (data, k) {
+  for (var i = 0, s = '_' + k, key = s;
+       hasOwnProperty.call(data, key);
+       key = s + i++) {
+    if (same(data[key].key, k))
+      return data[key]
+  }
+}
+
+function set (data, k, v) {
+  for (var i = 0, s = '_' + k, key = s;
+       hasOwnProperty.call(data, key);
+       key = s + i++) {
+    if (same(data[key].key, k)) {
+      data[key].value = v
+      return
+    }
+  }
+  data.size++
+  data[key] = new Entry(k, v, key)
+}
+
+
+/***/ }),
+
 /***/ 87898:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -227185,6 +228442,39 @@ module.exports = Pack
 
 /***/ }),
 
+/***/ 54324:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const fs = __nccwpck_require__(79896);
+const os = __nccwpck_require__(70857);
+
+const ID = '__RESOLVED_TMP_DIR__';
+
+if (!global[ID]) {
+	Object.defineProperty(global, ID, {
+		value: fs.realpathSync(os.tmpdir())
+	});
+}
+
+module.exports = global[ID];
+
+
+/***/ }),
+
+/***/ 64180:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const path = __nccwpck_require__(16928);
+const uuid = __nccwpck_require__(87723);
+const tempDir = __nccwpck_require__(54324);
+
+module.exports = ext => path.join(tempDir, uuid.v4() + (ext || ''));
+
+
+/***/ }),
+
 /***/ 83745:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -255254,6 +256544,221 @@ exports.decodeURIComponent = function decodeURIComponent_(encodeText) {
 
 /***/ }),
 
+/***/ 87723:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+var v1 = __nccwpck_require__(46626);
+var v4 = __nccwpck_require__(99021);
+
+var uuid = v4;
+uuid.v1 = v1;
+uuid.v4 = v4;
+
+module.exports = uuid;
+
+
+/***/ }),
+
+/***/ 38682:
+/***/ ((module) => {
+
+/**
+ * Convert array of 16 byte values to UUID string format of the form:
+ * XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+ */
+var byteToHex = [];
+for (var i = 0; i < 256; ++i) {
+  byteToHex[i] = (i + 0x100).toString(16).substr(1);
+}
+
+function bytesToUuid(buf, offset) {
+  var i = offset || 0;
+  var bth = byteToHex;
+  // join used to fix memory issue caused by concatenation: https://bugs.chromium.org/p/v8/issues/detail?id=3175#c4
+  return ([
+    bth[buf[i++]], bth[buf[i++]],
+    bth[buf[i++]], bth[buf[i++]], '-',
+    bth[buf[i++]], bth[buf[i++]], '-',
+    bth[buf[i++]], bth[buf[i++]], '-',
+    bth[buf[i++]], bth[buf[i++]], '-',
+    bth[buf[i++]], bth[buf[i++]],
+    bth[buf[i++]], bth[buf[i++]],
+    bth[buf[i++]], bth[buf[i++]]
+  ]).join('');
+}
+
+module.exports = bytesToUuid;
+
+
+/***/ }),
+
+/***/ 61694:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+// Unique ID creation requires a high quality random # generator.  In node.js
+// this is pretty straight-forward - we use the crypto API.
+
+var crypto = __nccwpck_require__(76982);
+
+module.exports = function nodeRNG() {
+  return crypto.randomBytes(16);
+};
+
+
+/***/ }),
+
+/***/ 46626:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+var rng = __nccwpck_require__(61694);
+var bytesToUuid = __nccwpck_require__(38682);
+
+// **`v1()` - Generate time-based UUID**
+//
+// Inspired by https://github.com/LiosK/UUID.js
+// and http://docs.python.org/library/uuid.html
+
+var _nodeId;
+var _clockseq;
+
+// Previous uuid creation time
+var _lastMSecs = 0;
+var _lastNSecs = 0;
+
+// See https://github.com/uuidjs/uuid for API details
+function v1(options, buf, offset) {
+  var i = buf && offset || 0;
+  var b = buf || [];
+
+  options = options || {};
+  var node = options.node || _nodeId;
+  var clockseq = options.clockseq !== undefined ? options.clockseq : _clockseq;
+
+  // node and clockseq need to be initialized to random values if they're not
+  // specified.  We do this lazily to minimize issues related to insufficient
+  // system entropy.  See #189
+  if (node == null || clockseq == null) {
+    var seedBytes = rng();
+    if (node == null) {
+      // Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
+      node = _nodeId = [
+        seedBytes[0] | 0x01,
+        seedBytes[1], seedBytes[2], seedBytes[3], seedBytes[4], seedBytes[5]
+      ];
+    }
+    if (clockseq == null) {
+      // Per 4.2.2, randomize (14 bit) clockseq
+      clockseq = _clockseq = (seedBytes[6] << 8 | seedBytes[7]) & 0x3fff;
+    }
+  }
+
+  // UUID timestamps are 100 nano-second units since the Gregorian epoch,
+  // (1582-10-15 00:00).  JSNumbers aren't precise enough for this, so
+  // time is handled internally as 'msecs' (integer milliseconds) and 'nsecs'
+  // (100-nanoseconds offset from msecs) since unix epoch, 1970-01-01 00:00.
+  var msecs = options.msecs !== undefined ? options.msecs : new Date().getTime();
+
+  // Per 4.2.1.2, use count of uuid's generated during the current clock
+  // cycle to simulate higher resolution clock
+  var nsecs = options.nsecs !== undefined ? options.nsecs : _lastNSecs + 1;
+
+  // Time since last uuid creation (in msecs)
+  var dt = (msecs - _lastMSecs) + (nsecs - _lastNSecs)/10000;
+
+  // Per 4.2.1.2, Bump clockseq on clock regression
+  if (dt < 0 && options.clockseq === undefined) {
+    clockseq = clockseq + 1 & 0x3fff;
+  }
+
+  // Reset nsecs if clock regresses (new clockseq) or we've moved onto a new
+  // time interval
+  if ((dt < 0 || msecs > _lastMSecs) && options.nsecs === undefined) {
+    nsecs = 0;
+  }
+
+  // Per 4.2.1.2 Throw error if too many uuids are requested
+  if (nsecs >= 10000) {
+    throw new Error('uuid.v1(): Can\'t create more than 10M uuids/sec');
+  }
+
+  _lastMSecs = msecs;
+  _lastNSecs = nsecs;
+  _clockseq = clockseq;
+
+  // Per 4.1.4 - Convert from unix epoch to Gregorian epoch
+  msecs += 12219292800000;
+
+  // `time_low`
+  var tl = ((msecs & 0xfffffff) * 10000 + nsecs) % 0x100000000;
+  b[i++] = tl >>> 24 & 0xff;
+  b[i++] = tl >>> 16 & 0xff;
+  b[i++] = tl >>> 8 & 0xff;
+  b[i++] = tl & 0xff;
+
+  // `time_mid`
+  var tmh = (msecs / 0x100000000 * 10000) & 0xfffffff;
+  b[i++] = tmh >>> 8 & 0xff;
+  b[i++] = tmh & 0xff;
+
+  // `time_high_and_version`
+  b[i++] = tmh >>> 24 & 0xf | 0x10; // include version
+  b[i++] = tmh >>> 16 & 0xff;
+
+  // `clock_seq_hi_and_reserved` (Per 4.2.2 - include variant)
+  b[i++] = clockseq >>> 8 | 0x80;
+
+  // `clock_seq_low`
+  b[i++] = clockseq & 0xff;
+
+  // `node`
+  for (var n = 0; n < 6; ++n) {
+    b[i + n] = node[n];
+  }
+
+  return buf ? buf : bytesToUuid(b);
+}
+
+module.exports = v1;
+
+
+/***/ }),
+
+/***/ 99021:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+var rng = __nccwpck_require__(61694);
+var bytesToUuid = __nccwpck_require__(38682);
+
+function v4(options, buf, offset) {
+  var i = buf && offset || 0;
+
+  if (typeof(options) == 'string') {
+    buf = options === 'binary' ? new Array(16) : null;
+    options = null;
+  }
+  options = options || {};
+
+  var rnds = options.random || (options.rng || rng)();
+
+  // Per 4.4, set bits for version and `clock_seq_hi_and_reserved`
+  rnds[6] = (rnds[6] & 0x0f) | 0x40;
+  rnds[8] = (rnds[8] & 0x3f) | 0x80;
+
+  // Copy bytes to buffer, if provided
+  if (buf) {
+    for (var ii = 0; ii < 16; ++ii) {
+      buf[i + ii] = rnds[ii];
+    }
+  }
+
+  return buf || bytesToUuid(rnds);
+}
+
+module.exports = v4;
+
+
+/***/ }),
+
 /***/ 37125:
 /***/ ((module) => {
 
@@ -258346,6 +259851,383 @@ function extend() {
 
 /***/ }),
 
+/***/ 17864:
+/***/ ((module) => {
+
+module.exports = Yallist
+
+Yallist.Node = Node
+Yallist.create = Yallist
+
+function Yallist (list) {
+  var self = this
+  if (!(self instanceof Yallist)) {
+    self = new Yallist()
+  }
+
+  self.tail = null
+  self.head = null
+  self.length = 0
+
+  if (list && typeof list.forEach === 'function') {
+    list.forEach(function (item) {
+      self.push(item)
+    })
+  } else if (arguments.length > 0) {
+    for (var i = 0, l = arguments.length; i < l; i++) {
+      self.push(arguments[i])
+    }
+  }
+
+  return self
+}
+
+Yallist.prototype.removeNode = function (node) {
+  if (node.list !== this) {
+    throw new Error('removing node which does not belong to this list')
+  }
+
+  var next = node.next
+  var prev = node.prev
+
+  if (next) {
+    next.prev = prev
+  }
+
+  if (prev) {
+    prev.next = next
+  }
+
+  if (node === this.head) {
+    this.head = next
+  }
+  if (node === this.tail) {
+    this.tail = prev
+  }
+
+  node.list.length--
+  node.next = null
+  node.prev = null
+  node.list = null
+}
+
+Yallist.prototype.unshiftNode = function (node) {
+  if (node === this.head) {
+    return
+  }
+
+  if (node.list) {
+    node.list.removeNode(node)
+  }
+
+  var head = this.head
+  node.list = this
+  node.next = head
+  if (head) {
+    head.prev = node
+  }
+
+  this.head = node
+  if (!this.tail) {
+    this.tail = node
+  }
+  this.length++
+}
+
+Yallist.prototype.pushNode = function (node) {
+  if (node === this.tail) {
+    return
+  }
+
+  if (node.list) {
+    node.list.removeNode(node)
+  }
+
+  var tail = this.tail
+  node.list = this
+  node.prev = tail
+  if (tail) {
+    tail.next = node
+  }
+
+  this.tail = node
+  if (!this.head) {
+    this.head = node
+  }
+  this.length++
+}
+
+Yallist.prototype.push = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    push(this, arguments[i])
+  }
+  return this.length
+}
+
+Yallist.prototype.unshift = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    unshift(this, arguments[i])
+  }
+  return this.length
+}
+
+Yallist.prototype.pop = function () {
+  if (!this.tail) {
+    return undefined
+  }
+
+  var res = this.tail.value
+  this.tail = this.tail.prev
+  if (this.tail) {
+    this.tail.next = null
+  } else {
+    this.head = null
+  }
+  this.length--
+  return res
+}
+
+Yallist.prototype.shift = function () {
+  if (!this.head) {
+    return undefined
+  }
+
+  var res = this.head.value
+  this.head = this.head.next
+  if (this.head) {
+    this.head.prev = null
+  } else {
+    this.tail = null
+  }
+  this.length--
+  return res
+}
+
+Yallist.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.head, i = 0; walker !== null; i++) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.next
+  }
+}
+
+Yallist.prototype.forEachReverse = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.tail, i = this.length - 1; walker !== null; i--) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.prev
+  }
+}
+
+Yallist.prototype.get = function (n) {
+  for (var i = 0, walker = this.head; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.next
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
+
+Yallist.prototype.getReverse = function (n) {
+  for (var i = 0, walker = this.tail; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.prev
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
+
+Yallist.prototype.map = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.head; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.next
+  }
+  return res
+}
+
+Yallist.prototype.mapReverse = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.tail; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.prev
+  }
+  return res
+}
+
+Yallist.prototype.reduce = function (fn, initial) {
+  var acc
+  var walker = this.head
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.head) {
+    walker = this.head.next
+    acc = this.head.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = 0; walker !== null; i++) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.next
+  }
+
+  return acc
+}
+
+Yallist.prototype.reduceReverse = function (fn, initial) {
+  var acc
+  var walker = this.tail
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.tail) {
+    walker = this.tail.prev
+    acc = this.tail.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = this.length - 1; walker !== null; i--) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.prev
+  }
+
+  return acc
+}
+
+Yallist.prototype.toArray = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.head; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.next
+  }
+  return arr
+}
+
+Yallist.prototype.toArrayReverse = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.tail; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.prev
+  }
+  return arr
+}
+
+Yallist.prototype.slice = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = 0, walker = this.head; walker !== null && i < from; i++) {
+    walker = walker.next
+  }
+  for (; walker !== null && i < to; i++, walker = walker.next) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.sliceReverse = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = this.length, walker = this.tail; walker !== null && i > to; i--) {
+    walker = walker.prev
+  }
+  for (; walker !== null && i > from; i--, walker = walker.prev) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.reverse = function () {
+  var head = this.head
+  var tail = this.tail
+  for (var walker = head; walker !== null; walker = walker.prev) {
+    var p = walker.prev
+    walker.prev = walker.next
+    walker.next = p
+  }
+  this.head = tail
+  this.tail = head
+  return this
+}
+
+function push (self, item) {
+  self.tail = new Node(item, self.tail, null, self)
+  if (!self.head) {
+    self.head = self.tail
+  }
+  self.length++
+}
+
+function unshift (self, item) {
+  self.head = new Node(item, null, self.head, self)
+  if (!self.tail) {
+    self.tail = self.head
+  }
+  self.length++
+}
+
+function Node (value, prev, next, list) {
+  if (!(this instanceof Node)) {
+    return new Node(value, prev, next, list)
+  }
+
+  this.list = list
+  this.value = value
+
+  if (prev) {
+    prev.next = this
+    this.prev = prev
+  } else {
+    this.prev = null
+  }
+
+  if (next) {
+    next.prev = this
+    this.next = next
+  } else {
+    this.next = null
+  }
+}
+
+
+/***/ }),
+
 /***/ 20663:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -259177,6 +261059,14 @@ module.exports = eval("require")("encoding");
 /***/ ((module) => {
 
 module.exports = eval("require")("proxy-agent");
+
+
+/***/ }),
+
+/***/ 20050:
+/***/ ((module) => {
+
+module.exports = eval("require")("spawn-sync");
 
 
 /***/ }),
@@ -275392,6 +277282,13 @@ module.exports = /*#__PURE__*/JSON.parse('{"assert":true,"node:assert":[">= 14.1
 
 /***/ }),
 
+/***/ 15337:
+/***/ ((module) => {
+
+module.exports = /*#__PURE__*/JSON.parse('{"name":"jpegtran-bin","version":"5.0.2","description":"jpegtran (part of libjpeg-turbo) bin-wrapper that makes it seamlessly available as a local dependency","license":"MIT","repository":"imagemin/jpegtran-bin","author":{"name":"Sindre Sorhus","email":"sindresorhus@gmail.com","url":"sindresorhus.com"},"maintainers":[{"name":"Kevin Mårtensson","email":"kevinmartensson@gmail.com","url":"github.com/kevva"},{"name":"Shinnosuke Watanabe","url":"github.com/shinnn"}],"bin":{"jpegtran":"cli.js"},"engines":{"node":">=10"},"scripts":{"postinstall":"node lib/install.js","test":"xo && ava --timeout=120s"},"files":["index.js","cli.js","lib","test","vendor/source"],"keywords":["imagemin","compress","image","img","jpeg","jpg","minify","optimize","jpegtran"],"dependencies":{"bin-build":"^3.0.0","bin-wrapper":"^4.0.0","logalot":"^2.0.0"},"devDependencies":{"ava":"^3.8.0","bin-check":"^4.0.1","compare-size":"^3.0.0","execa":"^4.0.0","tempy":"^0.5.0","xo":"^0.30.0"}}');
+
+/***/ }),
+
 /***/ 81813:
 /***/ ((module) => {
 
@@ -275417,6 +277314,13 @@ module.exports = /*#__PURE__*/JSON.parse('{"version":"2025b","zones":["Africa/Ab
 /***/ ((module) => {
 
 module.exports = /*#__PURE__*/JSON.parse('{"application/1d-interleaved-parityfec":{"source":"iana"},"application/3gpdash-qoe-report+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/3gpp-ims+xml":{"source":"iana","compressible":true},"application/3gpphal+json":{"source":"iana","compressible":true},"application/3gpphalforms+json":{"source":"iana","compressible":true},"application/a2l":{"source":"iana"},"application/ace+cbor":{"source":"iana"},"application/activemessage":{"source":"iana"},"application/activity+json":{"source":"iana","compressible":true},"application/alto-costmap+json":{"source":"iana","compressible":true},"application/alto-costmapfilter+json":{"source":"iana","compressible":true},"application/alto-directory+json":{"source":"iana","compressible":true},"application/alto-endpointcost+json":{"source":"iana","compressible":true},"application/alto-endpointcostparams+json":{"source":"iana","compressible":true},"application/alto-endpointprop+json":{"source":"iana","compressible":true},"application/alto-endpointpropparams+json":{"source":"iana","compressible":true},"application/alto-error+json":{"source":"iana","compressible":true},"application/alto-networkmap+json":{"source":"iana","compressible":true},"application/alto-networkmapfilter+json":{"source":"iana","compressible":true},"application/alto-updatestreamcontrol+json":{"source":"iana","compressible":true},"application/alto-updatestreamparams+json":{"source":"iana","compressible":true},"application/aml":{"source":"iana"},"application/andrew-inset":{"source":"iana","extensions":["ez"]},"application/applefile":{"source":"iana"},"application/applixware":{"source":"apache","extensions":["aw"]},"application/at+jwt":{"source":"iana"},"application/atf":{"source":"iana"},"application/atfx":{"source":"iana"},"application/atom+xml":{"source":"iana","compressible":true,"extensions":["atom"]},"application/atomcat+xml":{"source":"iana","compressible":true,"extensions":["atomcat"]},"application/atomdeleted+xml":{"source":"iana","compressible":true,"extensions":["atomdeleted"]},"application/atomicmail":{"source":"iana"},"application/atomsvc+xml":{"source":"iana","compressible":true,"extensions":["atomsvc"]},"application/atsc-dwd+xml":{"source":"iana","compressible":true,"extensions":["dwd"]},"application/atsc-dynamic-event-message":{"source":"iana"},"application/atsc-held+xml":{"source":"iana","compressible":true,"extensions":["held"]},"application/atsc-rdt+json":{"source":"iana","compressible":true},"application/atsc-rsat+xml":{"source":"iana","compressible":true,"extensions":["rsat"]},"application/atxml":{"source":"iana"},"application/auth-policy+xml":{"source":"iana","compressible":true},"application/bacnet-xdd+zip":{"source":"iana","compressible":false},"application/batch-smtp":{"source":"iana"},"application/bdoc":{"compressible":false,"extensions":["bdoc"]},"application/beep+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/calendar+json":{"source":"iana","compressible":true},"application/calendar+xml":{"source":"iana","compressible":true,"extensions":["xcs"]},"application/call-completion":{"source":"iana"},"application/cals-1840":{"source":"iana"},"application/captive+json":{"source":"iana","compressible":true},"application/cbor":{"source":"iana"},"application/cbor-seq":{"source":"iana"},"application/cccex":{"source":"iana"},"application/ccmp+xml":{"source":"iana","compressible":true},"application/ccxml+xml":{"source":"iana","compressible":true,"extensions":["ccxml"]},"application/cdfx+xml":{"source":"iana","compressible":true,"extensions":["cdfx"]},"application/cdmi-capability":{"source":"iana","extensions":["cdmia"]},"application/cdmi-container":{"source":"iana","extensions":["cdmic"]},"application/cdmi-domain":{"source":"iana","extensions":["cdmid"]},"application/cdmi-object":{"source":"iana","extensions":["cdmio"]},"application/cdmi-queue":{"source":"iana","extensions":["cdmiq"]},"application/cdni":{"source":"iana"},"application/cea":{"source":"iana"},"application/cea-2018+xml":{"source":"iana","compressible":true},"application/cellml+xml":{"source":"iana","compressible":true},"application/cfw":{"source":"iana"},"application/clr":{"source":"iana"},"application/clue+xml":{"source":"iana","compressible":true},"application/clue_info+xml":{"source":"iana","compressible":true},"application/cms":{"source":"iana"},"application/cnrp+xml":{"source":"iana","compressible":true},"application/coap-group+json":{"source":"iana","compressible":true},"application/coap-payload":{"source":"iana"},"application/commonground":{"source":"iana"},"application/conference-info+xml":{"source":"iana","compressible":true},"application/cose":{"source":"iana"},"application/cose-key":{"source":"iana"},"application/cose-key-set":{"source":"iana"},"application/cpl+xml":{"source":"iana","compressible":true},"application/csrattrs":{"source":"iana"},"application/csta+xml":{"source":"iana","compressible":true},"application/cstadata+xml":{"source":"iana","compressible":true},"application/csvm+json":{"source":"iana","compressible":true},"application/cu-seeme":{"source":"apache","extensions":["cu"]},"application/cwt":{"source":"iana"},"application/cybercash":{"source":"iana"},"application/dart":{"compressible":true},"application/dash+xml":{"source":"iana","compressible":true,"extensions":["mpd"]},"application/dashdelta":{"source":"iana"},"application/davmount+xml":{"source":"iana","compressible":true,"extensions":["davmount"]},"application/dca-rft":{"source":"iana"},"application/dcd":{"source":"iana"},"application/dec-dx":{"source":"iana"},"application/dialog-info+xml":{"source":"iana","compressible":true},"application/dicom":{"source":"iana"},"application/dicom+json":{"source":"iana","compressible":true},"application/dicom+xml":{"source":"iana","compressible":true},"application/dii":{"source":"iana"},"application/dit":{"source":"iana"},"application/dns":{"source":"iana"},"application/dns+json":{"source":"iana","compressible":true},"application/dns-message":{"source":"iana"},"application/docbook+xml":{"source":"apache","compressible":true,"extensions":["dbk"]},"application/dots+cbor":{"source":"iana"},"application/dskpp+xml":{"source":"iana","compressible":true},"application/dssc+der":{"source":"iana","extensions":["dssc"]},"application/dssc+xml":{"source":"iana","compressible":true,"extensions":["xdssc"]},"application/dvcs":{"source":"iana"},"application/ecmascript":{"source":"iana","compressible":true,"extensions":["es","ecma"]},"application/edi-consent":{"source":"iana"},"application/edi-x12":{"source":"iana","compressible":false},"application/edifact":{"source":"iana","compressible":false},"application/efi":{"source":"iana"},"application/elm+json":{"source":"iana","charset":"UTF-8","compressible":true},"application/elm+xml":{"source":"iana","compressible":true},"application/emergencycalldata.cap+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/emergencycalldata.comment+xml":{"source":"iana","compressible":true},"application/emergencycalldata.control+xml":{"source":"iana","compressible":true},"application/emergencycalldata.deviceinfo+xml":{"source":"iana","compressible":true},"application/emergencycalldata.ecall.msd":{"source":"iana"},"application/emergencycalldata.providerinfo+xml":{"source":"iana","compressible":true},"application/emergencycalldata.serviceinfo+xml":{"source":"iana","compressible":true},"application/emergencycalldata.subscriberinfo+xml":{"source":"iana","compressible":true},"application/emergencycalldata.veds+xml":{"source":"iana","compressible":true},"application/emma+xml":{"source":"iana","compressible":true,"extensions":["emma"]},"application/emotionml+xml":{"source":"iana","compressible":true,"extensions":["emotionml"]},"application/encaprtp":{"source":"iana"},"application/epp+xml":{"source":"iana","compressible":true},"application/epub+zip":{"source":"iana","compressible":false,"extensions":["epub"]},"application/eshop":{"source":"iana"},"application/exi":{"source":"iana","extensions":["exi"]},"application/expect-ct-report+json":{"source":"iana","compressible":true},"application/express":{"source":"iana","extensions":["exp"]},"application/fastinfoset":{"source":"iana"},"application/fastsoap":{"source":"iana"},"application/fdt+xml":{"source":"iana","compressible":true,"extensions":["fdt"]},"application/fhir+json":{"source":"iana","charset":"UTF-8","compressible":true},"application/fhir+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/fido.trusted-apps+json":{"compressible":true},"application/fits":{"source":"iana"},"application/flexfec":{"source":"iana"},"application/font-sfnt":{"source":"iana"},"application/font-tdpfr":{"source":"iana","extensions":["pfr"]},"application/font-woff":{"source":"iana","compressible":false},"application/framework-attributes+xml":{"source":"iana","compressible":true},"application/geo+json":{"source":"iana","compressible":true,"extensions":["geojson"]},"application/geo+json-seq":{"source":"iana"},"application/geopackage+sqlite3":{"source":"iana"},"application/geoxacml+xml":{"source":"iana","compressible":true},"application/gltf-buffer":{"source":"iana"},"application/gml+xml":{"source":"iana","compressible":true,"extensions":["gml"]},"application/gpx+xml":{"source":"apache","compressible":true,"extensions":["gpx"]},"application/gxf":{"source":"apache","extensions":["gxf"]},"application/gzip":{"source":"iana","compressible":false,"extensions":["gz"]},"application/h224":{"source":"iana"},"application/held+xml":{"source":"iana","compressible":true},"application/hjson":{"extensions":["hjson"]},"application/http":{"source":"iana"},"application/hyperstudio":{"source":"iana","extensions":["stk"]},"application/ibe-key-request+xml":{"source":"iana","compressible":true},"application/ibe-pkg-reply+xml":{"source":"iana","compressible":true},"application/ibe-pp-data":{"source":"iana"},"application/iges":{"source":"iana"},"application/im-iscomposing+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/index":{"source":"iana"},"application/index.cmd":{"source":"iana"},"application/index.obj":{"source":"iana"},"application/index.response":{"source":"iana"},"application/index.vnd":{"source":"iana"},"application/inkml+xml":{"source":"iana","compressible":true,"extensions":["ink","inkml"]},"application/iotp":{"source":"iana"},"application/ipfix":{"source":"iana","extensions":["ipfix"]},"application/ipp":{"source":"iana"},"application/isup":{"source":"iana"},"application/its+xml":{"source":"iana","compressible":true,"extensions":["its"]},"application/java-archive":{"source":"apache","compressible":false,"extensions":["jar","war","ear"]},"application/java-serialized-object":{"source":"apache","compressible":false,"extensions":["ser"]},"application/java-vm":{"source":"apache","compressible":false,"extensions":["class"]},"application/javascript":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["js","mjs"]},"application/jf2feed+json":{"source":"iana","compressible":true},"application/jose":{"source":"iana"},"application/jose+json":{"source":"iana","compressible":true},"application/jrd+json":{"source":"iana","compressible":true},"application/jscalendar+json":{"source":"iana","compressible":true},"application/json":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["json","map"]},"application/json-patch+json":{"source":"iana","compressible":true},"application/json-seq":{"source":"iana"},"application/json5":{"extensions":["json5"]},"application/jsonml+json":{"source":"apache","compressible":true,"extensions":["jsonml"]},"application/jwk+json":{"source":"iana","compressible":true},"application/jwk-set+json":{"source":"iana","compressible":true},"application/jwt":{"source":"iana"},"application/kpml-request+xml":{"source":"iana","compressible":true},"application/kpml-response+xml":{"source":"iana","compressible":true},"application/ld+json":{"source":"iana","compressible":true,"extensions":["jsonld"]},"application/lgr+xml":{"source":"iana","compressible":true,"extensions":["lgr"]},"application/link-format":{"source":"iana"},"application/load-control+xml":{"source":"iana","compressible":true},"application/lost+xml":{"source":"iana","compressible":true,"extensions":["lostxml"]},"application/lostsync+xml":{"source":"iana","compressible":true},"application/lpf+zip":{"source":"iana","compressible":false},"application/lxf":{"source":"iana"},"application/mac-binhex40":{"source":"iana","extensions":["hqx"]},"application/mac-compactpro":{"source":"apache","extensions":["cpt"]},"application/macwriteii":{"source":"iana"},"application/mads+xml":{"source":"iana","compressible":true,"extensions":["mads"]},"application/manifest+json":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["webmanifest"]},"application/marc":{"source":"iana","extensions":["mrc"]},"application/marcxml+xml":{"source":"iana","compressible":true,"extensions":["mrcx"]},"application/mathematica":{"source":"iana","extensions":["ma","nb","mb"]},"application/mathml+xml":{"source":"iana","compressible":true,"extensions":["mathml"]},"application/mathml-content+xml":{"source":"iana","compressible":true},"application/mathml-presentation+xml":{"source":"iana","compressible":true},"application/mbms-associated-procedure-description+xml":{"source":"iana","compressible":true},"application/mbms-deregister+xml":{"source":"iana","compressible":true},"application/mbms-envelope+xml":{"source":"iana","compressible":true},"application/mbms-msk+xml":{"source":"iana","compressible":true},"application/mbms-msk-response+xml":{"source":"iana","compressible":true},"application/mbms-protection-description+xml":{"source":"iana","compressible":true},"application/mbms-reception-report+xml":{"source":"iana","compressible":true},"application/mbms-register+xml":{"source":"iana","compressible":true},"application/mbms-register-response+xml":{"source":"iana","compressible":true},"application/mbms-schedule+xml":{"source":"iana","compressible":true},"application/mbms-user-service-description+xml":{"source":"iana","compressible":true},"application/mbox":{"source":"iana","extensions":["mbox"]},"application/media-policy-dataset+xml":{"source":"iana","compressible":true},"application/media_control+xml":{"source":"iana","compressible":true},"application/mediaservercontrol+xml":{"source":"iana","compressible":true,"extensions":["mscml"]},"application/merge-patch+json":{"source":"iana","compressible":true},"application/metalink+xml":{"source":"apache","compressible":true,"extensions":["metalink"]},"application/metalink4+xml":{"source":"iana","compressible":true,"extensions":["meta4"]},"application/mets+xml":{"source":"iana","compressible":true,"extensions":["mets"]},"application/mf4":{"source":"iana"},"application/mikey":{"source":"iana"},"application/mipc":{"source":"iana"},"application/missing-blocks+cbor-seq":{"source":"iana"},"application/mmt-aei+xml":{"source":"iana","compressible":true,"extensions":["maei"]},"application/mmt-usd+xml":{"source":"iana","compressible":true,"extensions":["musd"]},"application/mods+xml":{"source":"iana","compressible":true,"extensions":["mods"]},"application/moss-keys":{"source":"iana"},"application/moss-signature":{"source":"iana"},"application/mosskey-data":{"source":"iana"},"application/mosskey-request":{"source":"iana"},"application/mp21":{"source":"iana","extensions":["m21","mp21"]},"application/mp4":{"source":"iana","extensions":["mp4s","m4p"]},"application/mpeg4-generic":{"source":"iana"},"application/mpeg4-iod":{"source":"iana"},"application/mpeg4-iod-xmt":{"source":"iana"},"application/mrb-consumer+xml":{"source":"iana","compressible":true},"application/mrb-publish+xml":{"source":"iana","compressible":true},"application/msc-ivr+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/msc-mixer+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/msword":{"source":"iana","compressible":false,"extensions":["doc","dot"]},"application/mud+json":{"source":"iana","compressible":true},"application/multipart-core":{"source":"iana"},"application/mxf":{"source":"iana","extensions":["mxf"]},"application/n-quads":{"source":"iana","extensions":["nq"]},"application/n-triples":{"source":"iana","extensions":["nt"]},"application/nasdata":{"source":"iana"},"application/news-checkgroups":{"source":"iana","charset":"US-ASCII"},"application/news-groupinfo":{"source":"iana","charset":"US-ASCII"},"application/news-transmission":{"source":"iana"},"application/nlsml+xml":{"source":"iana","compressible":true},"application/node":{"source":"iana","extensions":["cjs"]},"application/nss":{"source":"iana"},"application/oauth-authz-req+jwt":{"source":"iana"},"application/ocsp-request":{"source":"iana"},"application/ocsp-response":{"source":"iana"},"application/octet-stream":{"source":"iana","compressible":false,"extensions":["bin","dms","lrf","mar","so","dist","distz","pkg","bpk","dump","elc","deploy","exe","dll","deb","dmg","iso","img","msi","msp","msm","buffer"]},"application/oda":{"source":"iana","extensions":["oda"]},"application/odm+xml":{"source":"iana","compressible":true},"application/odx":{"source":"iana"},"application/oebps-package+xml":{"source":"iana","compressible":true,"extensions":["opf"]},"application/ogg":{"source":"iana","compressible":false,"extensions":["ogx"]},"application/omdoc+xml":{"source":"apache","compressible":true,"extensions":["omdoc"]},"application/onenote":{"source":"apache","extensions":["onetoc","onetoc2","onetmp","onepkg"]},"application/opc-nodeset+xml":{"source":"iana","compressible":true},"application/oscore":{"source":"iana"},"application/oxps":{"source":"iana","extensions":["oxps"]},"application/p21":{"source":"iana"},"application/p21+zip":{"source":"iana","compressible":false},"application/p2p-overlay+xml":{"source":"iana","compressible":true,"extensions":["relo"]},"application/parityfec":{"source":"iana"},"application/passport":{"source":"iana"},"application/patch-ops-error+xml":{"source":"iana","compressible":true,"extensions":["xer"]},"application/pdf":{"source":"iana","compressible":false,"extensions":["pdf"]},"application/pdx":{"source":"iana"},"application/pem-certificate-chain":{"source":"iana"},"application/pgp-encrypted":{"source":"iana","compressible":false,"extensions":["pgp"]},"application/pgp-keys":{"source":"iana"},"application/pgp-signature":{"source":"iana","extensions":["asc","sig"]},"application/pics-rules":{"source":"apache","extensions":["prf"]},"application/pidf+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/pidf-diff+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/pkcs10":{"source":"iana","extensions":["p10"]},"application/pkcs12":{"source":"iana"},"application/pkcs7-mime":{"source":"iana","extensions":["p7m","p7c"]},"application/pkcs7-signature":{"source":"iana","extensions":["p7s"]},"application/pkcs8":{"source":"iana","extensions":["p8"]},"application/pkcs8-encrypted":{"source":"iana"},"application/pkix-attr-cert":{"source":"iana","extensions":["ac"]},"application/pkix-cert":{"source":"iana","extensions":["cer"]},"application/pkix-crl":{"source":"iana","extensions":["crl"]},"application/pkix-pkipath":{"source":"iana","extensions":["pkipath"]},"application/pkixcmp":{"source":"iana","extensions":["pki"]},"application/pls+xml":{"source":"iana","compressible":true,"extensions":["pls"]},"application/poc-settings+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/postscript":{"source":"iana","compressible":true,"extensions":["ai","eps","ps"]},"application/ppsp-tracker+json":{"source":"iana","compressible":true},"application/problem+json":{"source":"iana","compressible":true},"application/problem+xml":{"source":"iana","compressible":true},"application/provenance+xml":{"source":"iana","compressible":true,"extensions":["provx"]},"application/prs.alvestrand.titrax-sheet":{"source":"iana"},"application/prs.cww":{"source":"iana","extensions":["cww"]},"application/prs.cyn":{"source":"iana","charset":"7-BIT"},"application/prs.hpub+zip":{"source":"iana","compressible":false},"application/prs.nprend":{"source":"iana"},"application/prs.plucker":{"source":"iana"},"application/prs.rdf-xml-crypt":{"source":"iana"},"application/prs.xsf+xml":{"source":"iana","compressible":true},"application/pskc+xml":{"source":"iana","compressible":true,"extensions":["pskcxml"]},"application/pvd+json":{"source":"iana","compressible":true},"application/qsig":{"source":"iana"},"application/raml+yaml":{"compressible":true,"extensions":["raml"]},"application/raptorfec":{"source":"iana"},"application/rdap+json":{"source":"iana","compressible":true},"application/rdf+xml":{"source":"iana","compressible":true,"extensions":["rdf","owl"]},"application/reginfo+xml":{"source":"iana","compressible":true,"extensions":["rif"]},"application/relax-ng-compact-syntax":{"source":"iana","extensions":["rnc"]},"application/remote-printing":{"source":"iana"},"application/reputon+json":{"source":"iana","compressible":true},"application/resource-lists+xml":{"source":"iana","compressible":true,"extensions":["rl"]},"application/resource-lists-diff+xml":{"source":"iana","compressible":true,"extensions":["rld"]},"application/rfc+xml":{"source":"iana","compressible":true},"application/riscos":{"source":"iana"},"application/rlmi+xml":{"source":"iana","compressible":true},"application/rls-services+xml":{"source":"iana","compressible":true,"extensions":["rs"]},"application/route-apd+xml":{"source":"iana","compressible":true,"extensions":["rapd"]},"application/route-s-tsid+xml":{"source":"iana","compressible":true,"extensions":["sls"]},"application/route-usd+xml":{"source":"iana","compressible":true,"extensions":["rusd"]},"application/rpki-ghostbusters":{"source":"iana","extensions":["gbr"]},"application/rpki-manifest":{"source":"iana","extensions":["mft"]},"application/rpki-publication":{"source":"iana"},"application/rpki-roa":{"source":"iana","extensions":["roa"]},"application/rpki-updown":{"source":"iana"},"application/rsd+xml":{"source":"apache","compressible":true,"extensions":["rsd"]},"application/rss+xml":{"source":"apache","compressible":true,"extensions":["rss"]},"application/rtf":{"source":"iana","compressible":true,"extensions":["rtf"]},"application/rtploopback":{"source":"iana"},"application/rtx":{"source":"iana"},"application/samlassertion+xml":{"source":"iana","compressible":true},"application/samlmetadata+xml":{"source":"iana","compressible":true},"application/sarif+json":{"source":"iana","compressible":true},"application/sarif-external-properties+json":{"source":"iana","compressible":true},"application/sbe":{"source":"iana"},"application/sbml+xml":{"source":"iana","compressible":true,"extensions":["sbml"]},"application/scaip+xml":{"source":"iana","compressible":true},"application/scim+json":{"source":"iana","compressible":true},"application/scvp-cv-request":{"source":"iana","extensions":["scq"]},"application/scvp-cv-response":{"source":"iana","extensions":["scs"]},"application/scvp-vp-request":{"source":"iana","extensions":["spq"]},"application/scvp-vp-response":{"source":"iana","extensions":["spp"]},"application/sdp":{"source":"iana","extensions":["sdp"]},"application/secevent+jwt":{"source":"iana"},"application/senml+cbor":{"source":"iana"},"application/senml+json":{"source":"iana","compressible":true},"application/senml+xml":{"source":"iana","compressible":true,"extensions":["senmlx"]},"application/senml-etch+cbor":{"source":"iana"},"application/senml-etch+json":{"source":"iana","compressible":true},"application/senml-exi":{"source":"iana"},"application/sensml+cbor":{"source":"iana"},"application/sensml+json":{"source":"iana","compressible":true},"application/sensml+xml":{"source":"iana","compressible":true,"extensions":["sensmlx"]},"application/sensml-exi":{"source":"iana"},"application/sep+xml":{"source":"iana","compressible":true},"application/sep-exi":{"source":"iana"},"application/session-info":{"source":"iana"},"application/set-payment":{"source":"iana"},"application/set-payment-initiation":{"source":"iana","extensions":["setpay"]},"application/set-registration":{"source":"iana"},"application/set-registration-initiation":{"source":"iana","extensions":["setreg"]},"application/sgml":{"source":"iana"},"application/sgml-open-catalog":{"source":"iana"},"application/shf+xml":{"source":"iana","compressible":true,"extensions":["shf"]},"application/sieve":{"source":"iana","extensions":["siv","sieve"]},"application/simple-filter+xml":{"source":"iana","compressible":true},"application/simple-message-summary":{"source":"iana"},"application/simplesymbolcontainer":{"source":"iana"},"application/sipc":{"source":"iana"},"application/slate":{"source":"iana"},"application/smil":{"source":"iana"},"application/smil+xml":{"source":"iana","compressible":true,"extensions":["smi","smil"]},"application/smpte336m":{"source":"iana"},"application/soap+fastinfoset":{"source":"iana"},"application/soap+xml":{"source":"iana","compressible":true},"application/sparql-query":{"source":"iana","extensions":["rq"]},"application/sparql-results+xml":{"source":"iana","compressible":true,"extensions":["srx"]},"application/spirits-event+xml":{"source":"iana","compressible":true},"application/sql":{"source":"iana"},"application/srgs":{"source":"iana","extensions":["gram"]},"application/srgs+xml":{"source":"iana","compressible":true,"extensions":["grxml"]},"application/sru+xml":{"source":"iana","compressible":true,"extensions":["sru"]},"application/ssdl+xml":{"source":"apache","compressible":true,"extensions":["ssdl"]},"application/ssml+xml":{"source":"iana","compressible":true,"extensions":["ssml"]},"application/stix+json":{"source":"iana","compressible":true},"application/swid+xml":{"source":"iana","compressible":true,"extensions":["swidtag"]},"application/tamp-apex-update":{"source":"iana"},"application/tamp-apex-update-confirm":{"source":"iana"},"application/tamp-community-update":{"source":"iana"},"application/tamp-community-update-confirm":{"source":"iana"},"application/tamp-error":{"source":"iana"},"application/tamp-sequence-adjust":{"source":"iana"},"application/tamp-sequence-adjust-confirm":{"source":"iana"},"application/tamp-status-query":{"source":"iana"},"application/tamp-status-response":{"source":"iana"},"application/tamp-update":{"source":"iana"},"application/tamp-update-confirm":{"source":"iana"},"application/tar":{"compressible":true},"application/taxii+json":{"source":"iana","compressible":true},"application/td+json":{"source":"iana","compressible":true},"application/tei+xml":{"source":"iana","compressible":true,"extensions":["tei","teicorpus"]},"application/tetra_isi":{"source":"iana"},"application/thraud+xml":{"source":"iana","compressible":true,"extensions":["tfi"]},"application/timestamp-query":{"source":"iana"},"application/timestamp-reply":{"source":"iana"},"application/timestamped-data":{"source":"iana","extensions":["tsd"]},"application/tlsrpt+gzip":{"source":"iana"},"application/tlsrpt+json":{"source":"iana","compressible":true},"application/tnauthlist":{"source":"iana"},"application/token-introspection+jwt":{"source":"iana"},"application/toml":{"compressible":true,"extensions":["toml"]},"application/trickle-ice-sdpfrag":{"source":"iana"},"application/trig":{"source":"iana","extensions":["trig"]},"application/ttml+xml":{"source":"iana","compressible":true,"extensions":["ttml"]},"application/tve-trigger":{"source":"iana"},"application/tzif":{"source":"iana"},"application/tzif-leap":{"source":"iana"},"application/ubjson":{"compressible":false,"extensions":["ubj"]},"application/ulpfec":{"source":"iana"},"application/urc-grpsheet+xml":{"source":"iana","compressible":true},"application/urc-ressheet+xml":{"source":"iana","compressible":true,"extensions":["rsheet"]},"application/urc-targetdesc+xml":{"source":"iana","compressible":true,"extensions":["td"]},"application/urc-uisocketdesc+xml":{"source":"iana","compressible":true},"application/vcard+json":{"source":"iana","compressible":true},"application/vcard+xml":{"source":"iana","compressible":true},"application/vemmi":{"source":"iana"},"application/vividence.scriptfile":{"source":"apache"},"application/vnd.1000minds.decision-model+xml":{"source":"iana","compressible":true,"extensions":["1km"]},"application/vnd.3gpp-prose+xml":{"source":"iana","compressible":true},"application/vnd.3gpp-prose-pc3ch+xml":{"source":"iana","compressible":true},"application/vnd.3gpp-v2x-local-service-information":{"source":"iana"},"application/vnd.3gpp.5gnas":{"source":"iana"},"application/vnd.3gpp.access-transfer-events+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.bsf+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.gmop+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.gtpc":{"source":"iana"},"application/vnd.3gpp.interworking-data":{"source":"iana"},"application/vnd.3gpp.lpp":{"source":"iana"},"application/vnd.3gpp.mc-signalling-ear":{"source":"iana"},"application/vnd.3gpp.mcdata-affiliation-command+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcdata-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcdata-payload":{"source":"iana"},"application/vnd.3gpp.mcdata-service-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcdata-signalling":{"source":"iana"},"application/vnd.3gpp.mcdata-ue-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcdata-user-profile+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-affiliation-command+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-floor-request+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-location-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-mbms-usage-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-service-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-signed+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-ue-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-ue-init-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcptt-user-profile+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-affiliation-command+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-affiliation-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-location-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-mbms-usage-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-service-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-transmission-request+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-ue-config+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mcvideo-user-profile+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.mid-call+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.ngap":{"source":"iana"},"application/vnd.3gpp.pfcp":{"source":"iana"},"application/vnd.3gpp.pic-bw-large":{"source":"iana","extensions":["plb"]},"application/vnd.3gpp.pic-bw-small":{"source":"iana","extensions":["psb"]},"application/vnd.3gpp.pic-bw-var":{"source":"iana","extensions":["pvb"]},"application/vnd.3gpp.s1ap":{"source":"iana"},"application/vnd.3gpp.sms":{"source":"iana"},"application/vnd.3gpp.sms+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.srvcc-ext+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.srvcc-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.state-and-event-info+xml":{"source":"iana","compressible":true},"application/vnd.3gpp.ussd+xml":{"source":"iana","compressible":true},"application/vnd.3gpp2.bcmcsinfo+xml":{"source":"iana","compressible":true},"application/vnd.3gpp2.sms":{"source":"iana"},"application/vnd.3gpp2.tcap":{"source":"iana","extensions":["tcap"]},"application/vnd.3lightssoftware.imagescal":{"source":"iana"},"application/vnd.3m.post-it-notes":{"source":"iana","extensions":["pwn"]},"application/vnd.accpac.simply.aso":{"source":"iana","extensions":["aso"]},"application/vnd.accpac.simply.imp":{"source":"iana","extensions":["imp"]},"application/vnd.acucobol":{"source":"iana","extensions":["acu"]},"application/vnd.acucorp":{"source":"iana","extensions":["atc","acutc"]},"application/vnd.adobe.air-application-installer-package+zip":{"source":"apache","compressible":false,"extensions":["air"]},"application/vnd.adobe.flash.movie":{"source":"iana"},"application/vnd.adobe.formscentral.fcdt":{"source":"iana","extensions":["fcdt"]},"application/vnd.adobe.fxp":{"source":"iana","extensions":["fxp","fxpl"]},"application/vnd.adobe.partial-upload":{"source":"iana"},"application/vnd.adobe.xdp+xml":{"source":"iana","compressible":true,"extensions":["xdp"]},"application/vnd.adobe.xfdf":{"source":"iana","extensions":["xfdf"]},"application/vnd.aether.imp":{"source":"iana"},"application/vnd.afpc.afplinedata":{"source":"iana"},"application/vnd.afpc.afplinedata-pagedef":{"source":"iana"},"application/vnd.afpc.cmoca-cmresource":{"source":"iana"},"application/vnd.afpc.foca-charset":{"source":"iana"},"application/vnd.afpc.foca-codedfont":{"source":"iana"},"application/vnd.afpc.foca-codepage":{"source":"iana"},"application/vnd.afpc.modca":{"source":"iana"},"application/vnd.afpc.modca-cmtable":{"source":"iana"},"application/vnd.afpc.modca-formdef":{"source":"iana"},"application/vnd.afpc.modca-mediummap":{"source":"iana"},"application/vnd.afpc.modca-objectcontainer":{"source":"iana"},"application/vnd.afpc.modca-overlay":{"source":"iana"},"application/vnd.afpc.modca-pagesegment":{"source":"iana"},"application/vnd.ah-barcode":{"source":"iana"},"application/vnd.ahead.space":{"source":"iana","extensions":["ahead"]},"application/vnd.airzip.filesecure.azf":{"source":"iana","extensions":["azf"]},"application/vnd.airzip.filesecure.azs":{"source":"iana","extensions":["azs"]},"application/vnd.amadeus+json":{"source":"iana","compressible":true},"application/vnd.amazon.ebook":{"source":"apache","extensions":["azw"]},"application/vnd.amazon.mobi8-ebook":{"source":"iana"},"application/vnd.americandynamics.acc":{"source":"iana","extensions":["acc"]},"application/vnd.amiga.ami":{"source":"iana","extensions":["ami"]},"application/vnd.amundsen.maze+xml":{"source":"iana","compressible":true},"application/vnd.android.ota":{"source":"iana"},"application/vnd.android.package-archive":{"source":"apache","compressible":false,"extensions":["apk"]},"application/vnd.anki":{"source":"iana"},"application/vnd.anser-web-certificate-issue-initiation":{"source":"iana","extensions":["cii"]},"application/vnd.anser-web-funds-transfer-initiation":{"source":"apache","extensions":["fti"]},"application/vnd.antix.game-component":{"source":"iana","extensions":["atx"]},"application/vnd.apache.arrow.file":{"source":"iana"},"application/vnd.apache.arrow.stream":{"source":"iana"},"application/vnd.apache.thrift.binary":{"source":"iana"},"application/vnd.apache.thrift.compact":{"source":"iana"},"application/vnd.apache.thrift.json":{"source":"iana"},"application/vnd.api+json":{"source":"iana","compressible":true},"application/vnd.aplextor.warrp+json":{"source":"iana","compressible":true},"application/vnd.apothekende.reservation+json":{"source":"iana","compressible":true},"application/vnd.apple.installer+xml":{"source":"iana","compressible":true,"extensions":["mpkg"]},"application/vnd.apple.keynote":{"source":"iana","extensions":["key"]},"application/vnd.apple.mpegurl":{"source":"iana","extensions":["m3u8"]},"application/vnd.apple.numbers":{"source":"iana","extensions":["numbers"]},"application/vnd.apple.pages":{"source":"iana","extensions":["pages"]},"application/vnd.apple.pkpass":{"compressible":false,"extensions":["pkpass"]},"application/vnd.arastra.swi":{"source":"iana"},"application/vnd.aristanetworks.swi":{"source":"iana","extensions":["swi"]},"application/vnd.artisan+json":{"source":"iana","compressible":true},"application/vnd.artsquare":{"source":"iana"},"application/vnd.astraea-software.iota":{"source":"iana","extensions":["iota"]},"application/vnd.audiograph":{"source":"iana","extensions":["aep"]},"application/vnd.autopackage":{"source":"iana"},"application/vnd.avalon+json":{"source":"iana","compressible":true},"application/vnd.avistar+xml":{"source":"iana","compressible":true},"application/vnd.balsamiq.bmml+xml":{"source":"iana","compressible":true,"extensions":["bmml"]},"application/vnd.balsamiq.bmpr":{"source":"iana"},"application/vnd.banana-accounting":{"source":"iana"},"application/vnd.bbf.usp.error":{"source":"iana"},"application/vnd.bbf.usp.msg":{"source":"iana"},"application/vnd.bbf.usp.msg+json":{"source":"iana","compressible":true},"application/vnd.bekitzur-stech+json":{"source":"iana","compressible":true},"application/vnd.bint.med-content":{"source":"iana"},"application/vnd.biopax.rdf+xml":{"source":"iana","compressible":true},"application/vnd.blink-idb-value-wrapper":{"source":"iana"},"application/vnd.blueice.multipass":{"source":"iana","extensions":["mpm"]},"application/vnd.bluetooth.ep.oob":{"source":"iana"},"application/vnd.bluetooth.le.oob":{"source":"iana"},"application/vnd.bmi":{"source":"iana","extensions":["bmi"]},"application/vnd.bpf":{"source":"iana"},"application/vnd.bpf3":{"source":"iana"},"application/vnd.businessobjects":{"source":"iana","extensions":["rep"]},"application/vnd.byu.uapi+json":{"source":"iana","compressible":true},"application/vnd.cab-jscript":{"source":"iana"},"application/vnd.canon-cpdl":{"source":"iana"},"application/vnd.canon-lips":{"source":"iana"},"application/vnd.capasystems-pg+json":{"source":"iana","compressible":true},"application/vnd.cendio.thinlinc.clientconf":{"source":"iana"},"application/vnd.century-systems.tcp_stream":{"source":"iana"},"application/vnd.chemdraw+xml":{"source":"iana","compressible":true,"extensions":["cdxml"]},"application/vnd.chess-pgn":{"source":"iana"},"application/vnd.chipnuts.karaoke-mmd":{"source":"iana","extensions":["mmd"]},"application/vnd.ciedi":{"source":"iana"},"application/vnd.cinderella":{"source":"iana","extensions":["cdy"]},"application/vnd.cirpack.isdn-ext":{"source":"iana"},"application/vnd.citationstyles.style+xml":{"source":"iana","compressible":true,"extensions":["csl"]},"application/vnd.claymore":{"source":"iana","extensions":["cla"]},"application/vnd.cloanto.rp9":{"source":"iana","extensions":["rp9"]},"application/vnd.clonk.c4group":{"source":"iana","extensions":["c4g","c4d","c4f","c4p","c4u"]},"application/vnd.cluetrust.cartomobile-config":{"source":"iana","extensions":["c11amc"]},"application/vnd.cluetrust.cartomobile-config-pkg":{"source":"iana","extensions":["c11amz"]},"application/vnd.coffeescript":{"source":"iana"},"application/vnd.collabio.xodocuments.document":{"source":"iana"},"application/vnd.collabio.xodocuments.document-template":{"source":"iana"},"application/vnd.collabio.xodocuments.presentation":{"source":"iana"},"application/vnd.collabio.xodocuments.presentation-template":{"source":"iana"},"application/vnd.collabio.xodocuments.spreadsheet":{"source":"iana"},"application/vnd.collabio.xodocuments.spreadsheet-template":{"source":"iana"},"application/vnd.collection+json":{"source":"iana","compressible":true},"application/vnd.collection.doc+json":{"source":"iana","compressible":true},"application/vnd.collection.next+json":{"source":"iana","compressible":true},"application/vnd.comicbook+zip":{"source":"iana","compressible":false},"application/vnd.comicbook-rar":{"source":"iana"},"application/vnd.commerce-battelle":{"source":"iana"},"application/vnd.commonspace":{"source":"iana","extensions":["csp"]},"application/vnd.contact.cmsg":{"source":"iana","extensions":["cdbcmsg"]},"application/vnd.coreos.ignition+json":{"source":"iana","compressible":true},"application/vnd.cosmocaller":{"source":"iana","extensions":["cmc"]},"application/vnd.crick.clicker":{"source":"iana","extensions":["clkx"]},"application/vnd.crick.clicker.keyboard":{"source":"iana","extensions":["clkk"]},"application/vnd.crick.clicker.palette":{"source":"iana","extensions":["clkp"]},"application/vnd.crick.clicker.template":{"source":"iana","extensions":["clkt"]},"application/vnd.crick.clicker.wordbank":{"source":"iana","extensions":["clkw"]},"application/vnd.criticaltools.wbs+xml":{"source":"iana","compressible":true,"extensions":["wbs"]},"application/vnd.cryptii.pipe+json":{"source":"iana","compressible":true},"application/vnd.crypto-shade-file":{"source":"iana"},"application/vnd.cryptomator.encrypted":{"source":"iana"},"application/vnd.cryptomator.vault":{"source":"iana"},"application/vnd.ctc-posml":{"source":"iana","extensions":["pml"]},"application/vnd.ctct.ws+xml":{"source":"iana","compressible":true},"application/vnd.cups-pdf":{"source":"iana"},"application/vnd.cups-postscript":{"source":"iana"},"application/vnd.cups-ppd":{"source":"iana","extensions":["ppd"]},"application/vnd.cups-raster":{"source":"iana"},"application/vnd.cups-raw":{"source":"iana"},"application/vnd.curl":{"source":"iana"},"application/vnd.curl.car":{"source":"apache","extensions":["car"]},"application/vnd.curl.pcurl":{"source":"apache","extensions":["pcurl"]},"application/vnd.cyan.dean.root+xml":{"source":"iana","compressible":true},"application/vnd.cybank":{"source":"iana"},"application/vnd.cyclonedx+json":{"source":"iana","compressible":true},"application/vnd.cyclonedx+xml":{"source":"iana","compressible":true},"application/vnd.d2l.coursepackage1p0+zip":{"source":"iana","compressible":false},"application/vnd.d3m-dataset":{"source":"iana"},"application/vnd.d3m-problem":{"source":"iana"},"application/vnd.dart":{"source":"iana","compressible":true,"extensions":["dart"]},"application/vnd.data-vision.rdz":{"source":"iana","extensions":["rdz"]},"application/vnd.datapackage+json":{"source":"iana","compressible":true},"application/vnd.dataresource+json":{"source":"iana","compressible":true},"application/vnd.dbf":{"source":"iana","extensions":["dbf"]},"application/vnd.debian.binary-package":{"source":"iana"},"application/vnd.dece.data":{"source":"iana","extensions":["uvf","uvvf","uvd","uvvd"]},"application/vnd.dece.ttml+xml":{"source":"iana","compressible":true,"extensions":["uvt","uvvt"]},"application/vnd.dece.unspecified":{"source":"iana","extensions":["uvx","uvvx"]},"application/vnd.dece.zip":{"source":"iana","extensions":["uvz","uvvz"]},"application/vnd.denovo.fcselayout-link":{"source":"iana","extensions":["fe_launch"]},"application/vnd.desmume.movie":{"source":"iana"},"application/vnd.dir-bi.plate-dl-nosuffix":{"source":"iana"},"application/vnd.dm.delegation+xml":{"source":"iana","compressible":true},"application/vnd.dna":{"source":"iana","extensions":["dna"]},"application/vnd.document+json":{"source":"iana","compressible":true},"application/vnd.dolby.mlp":{"source":"apache","extensions":["mlp"]},"application/vnd.dolby.mobile.1":{"source":"iana"},"application/vnd.dolby.mobile.2":{"source":"iana"},"application/vnd.doremir.scorecloud-binary-document":{"source":"iana"},"application/vnd.dpgraph":{"source":"iana","extensions":["dpg"]},"application/vnd.dreamfactory":{"source":"iana","extensions":["dfac"]},"application/vnd.drive+json":{"source":"iana","compressible":true},"application/vnd.ds-keypoint":{"source":"apache","extensions":["kpxx"]},"application/vnd.dtg.local":{"source":"iana"},"application/vnd.dtg.local.flash":{"source":"iana"},"application/vnd.dtg.local.html":{"source":"iana"},"application/vnd.dvb.ait":{"source":"iana","extensions":["ait"]},"application/vnd.dvb.dvbisl+xml":{"source":"iana","compressible":true},"application/vnd.dvb.dvbj":{"source":"iana"},"application/vnd.dvb.esgcontainer":{"source":"iana"},"application/vnd.dvb.ipdcdftnotifaccess":{"source":"iana"},"application/vnd.dvb.ipdcesgaccess":{"source":"iana"},"application/vnd.dvb.ipdcesgaccess2":{"source":"iana"},"application/vnd.dvb.ipdcesgpdd":{"source":"iana"},"application/vnd.dvb.ipdcroaming":{"source":"iana"},"application/vnd.dvb.iptv.alfec-base":{"source":"iana"},"application/vnd.dvb.iptv.alfec-enhancement":{"source":"iana"},"application/vnd.dvb.notif-aggregate-root+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-container+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-generic+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-ia-msglist+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-ia-registration-request+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-ia-registration-response+xml":{"source":"iana","compressible":true},"application/vnd.dvb.notif-init+xml":{"source":"iana","compressible":true},"application/vnd.dvb.pfr":{"source":"iana"},"application/vnd.dvb.service":{"source":"iana","extensions":["svc"]},"application/vnd.dxr":{"source":"iana"},"application/vnd.dynageo":{"source":"iana","extensions":["geo"]},"application/vnd.dzr":{"source":"iana"},"application/vnd.easykaraoke.cdgdownload":{"source":"iana"},"application/vnd.ecdis-update":{"source":"iana"},"application/vnd.ecip.rlp":{"source":"iana"},"application/vnd.ecowin.chart":{"source":"iana","extensions":["mag"]},"application/vnd.ecowin.filerequest":{"source":"iana"},"application/vnd.ecowin.fileupdate":{"source":"iana"},"application/vnd.ecowin.series":{"source":"iana"},"application/vnd.ecowin.seriesrequest":{"source":"iana"},"application/vnd.ecowin.seriesupdate":{"source":"iana"},"application/vnd.efi.img":{"source":"iana"},"application/vnd.efi.iso":{"source":"iana"},"application/vnd.emclient.accessrequest+xml":{"source":"iana","compressible":true},"application/vnd.enliven":{"source":"iana","extensions":["nml"]},"application/vnd.enphase.envoy":{"source":"iana"},"application/vnd.eprints.data+xml":{"source":"iana","compressible":true},"application/vnd.epson.esf":{"source":"iana","extensions":["esf"]},"application/vnd.epson.msf":{"source":"iana","extensions":["msf"]},"application/vnd.epson.quickanime":{"source":"iana","extensions":["qam"]},"application/vnd.epson.salt":{"source":"iana","extensions":["slt"]},"application/vnd.epson.ssf":{"source":"iana","extensions":["ssf"]},"application/vnd.ericsson.quickcall":{"source":"iana"},"application/vnd.espass-espass+zip":{"source":"iana","compressible":false},"application/vnd.eszigno3+xml":{"source":"iana","compressible":true,"extensions":["es3","et3"]},"application/vnd.etsi.aoc+xml":{"source":"iana","compressible":true},"application/vnd.etsi.asic-e+zip":{"source":"iana","compressible":false},"application/vnd.etsi.asic-s+zip":{"source":"iana","compressible":false},"application/vnd.etsi.cug+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvcommand+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvdiscovery+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvprofile+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvsad-bc+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvsad-cod+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvsad-npvr+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvservice+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvsync+xml":{"source":"iana","compressible":true},"application/vnd.etsi.iptvueprofile+xml":{"source":"iana","compressible":true},"application/vnd.etsi.mcid+xml":{"source":"iana","compressible":true},"application/vnd.etsi.mheg5":{"source":"iana"},"application/vnd.etsi.overload-control-policy-dataset+xml":{"source":"iana","compressible":true},"application/vnd.etsi.pstn+xml":{"source":"iana","compressible":true},"application/vnd.etsi.sci+xml":{"source":"iana","compressible":true},"application/vnd.etsi.simservs+xml":{"source":"iana","compressible":true},"application/vnd.etsi.timestamp-token":{"source":"iana"},"application/vnd.etsi.tsl+xml":{"source":"iana","compressible":true},"application/vnd.etsi.tsl.der":{"source":"iana"},"application/vnd.eudora.data":{"source":"iana"},"application/vnd.evolv.ecig.profile":{"source":"iana"},"application/vnd.evolv.ecig.settings":{"source":"iana"},"application/vnd.evolv.ecig.theme":{"source":"iana"},"application/vnd.exstream-empower+zip":{"source":"iana","compressible":false},"application/vnd.exstream-package":{"source":"iana"},"application/vnd.ezpix-album":{"source":"iana","extensions":["ez2"]},"application/vnd.ezpix-package":{"source":"iana","extensions":["ez3"]},"application/vnd.f-secure.mobile":{"source":"iana"},"application/vnd.fastcopy-disk-image":{"source":"iana"},"application/vnd.fdf":{"source":"iana","extensions":["fdf"]},"application/vnd.fdsn.mseed":{"source":"iana","extensions":["mseed"]},"application/vnd.fdsn.seed":{"source":"iana","extensions":["seed","dataless"]},"application/vnd.ffsns":{"source":"iana"},"application/vnd.ficlab.flb+zip":{"source":"iana","compressible":false},"application/vnd.filmit.zfc":{"source":"iana"},"application/vnd.fints":{"source":"iana"},"application/vnd.firemonkeys.cloudcell":{"source":"iana"},"application/vnd.flographit":{"source":"iana","extensions":["gph"]},"application/vnd.fluxtime.clip":{"source":"iana","extensions":["ftc"]},"application/vnd.font-fontforge-sfd":{"source":"iana"},"application/vnd.framemaker":{"source":"iana","extensions":["fm","frame","maker","book"]},"application/vnd.frogans.fnc":{"source":"iana","extensions":["fnc"]},"application/vnd.frogans.ltf":{"source":"iana","extensions":["ltf"]},"application/vnd.fsc.weblaunch":{"source":"iana","extensions":["fsc"]},"application/vnd.fujifilm.fb.docuworks":{"source":"iana"},"application/vnd.fujifilm.fb.docuworks.binder":{"source":"iana"},"application/vnd.fujifilm.fb.docuworks.container":{"source":"iana"},"application/vnd.fujifilm.fb.jfi+xml":{"source":"iana","compressible":true},"application/vnd.fujitsu.oasys":{"source":"iana","extensions":["oas"]},"application/vnd.fujitsu.oasys2":{"source":"iana","extensions":["oa2"]},"application/vnd.fujitsu.oasys3":{"source":"iana","extensions":["oa3"]},"application/vnd.fujitsu.oasysgp":{"source":"iana","extensions":["fg5"]},"application/vnd.fujitsu.oasysprs":{"source":"iana","extensions":["bh2"]},"application/vnd.fujixerox.art-ex":{"source":"iana"},"application/vnd.fujixerox.art4":{"source":"iana"},"application/vnd.fujixerox.ddd":{"source":"iana","extensions":["ddd"]},"application/vnd.fujixerox.docuworks":{"source":"iana","extensions":["xdw"]},"application/vnd.fujixerox.docuworks.binder":{"source":"iana","extensions":["xbd"]},"application/vnd.fujixerox.docuworks.container":{"source":"iana"},"application/vnd.fujixerox.hbpl":{"source":"iana"},"application/vnd.fut-misnet":{"source":"iana"},"application/vnd.futoin+cbor":{"source":"iana"},"application/vnd.futoin+json":{"source":"iana","compressible":true},"application/vnd.fuzzysheet":{"source":"iana","extensions":["fzs"]},"application/vnd.genomatix.tuxedo":{"source":"iana","extensions":["txd"]},"application/vnd.gentics.grd+json":{"source":"iana","compressible":true},"application/vnd.geo+json":{"source":"iana","compressible":true},"application/vnd.geocube+xml":{"source":"iana","compressible":true},"application/vnd.geogebra.file":{"source":"iana","extensions":["ggb"]},"application/vnd.geogebra.slides":{"source":"iana"},"application/vnd.geogebra.tool":{"source":"iana","extensions":["ggt"]},"application/vnd.geometry-explorer":{"source":"iana","extensions":["gex","gre"]},"application/vnd.geonext":{"source":"iana","extensions":["gxt"]},"application/vnd.geoplan":{"source":"iana","extensions":["g2w"]},"application/vnd.geospace":{"source":"iana","extensions":["g3w"]},"application/vnd.gerber":{"source":"iana"},"application/vnd.globalplatform.card-content-mgt":{"source":"iana"},"application/vnd.globalplatform.card-content-mgt-response":{"source":"iana"},"application/vnd.gmx":{"source":"iana","extensions":["gmx"]},"application/vnd.google-apps.document":{"compressible":false,"extensions":["gdoc"]},"application/vnd.google-apps.presentation":{"compressible":false,"extensions":["gslides"]},"application/vnd.google-apps.spreadsheet":{"compressible":false,"extensions":["gsheet"]},"application/vnd.google-earth.kml+xml":{"source":"iana","compressible":true,"extensions":["kml"]},"application/vnd.google-earth.kmz":{"source":"iana","compressible":false,"extensions":["kmz"]},"application/vnd.gov.sk.e-form+xml":{"source":"iana","compressible":true},"application/vnd.gov.sk.e-form+zip":{"source":"iana","compressible":false},"application/vnd.gov.sk.xmldatacontainer+xml":{"source":"iana","compressible":true},"application/vnd.grafeq":{"source":"iana","extensions":["gqf","gqs"]},"application/vnd.gridmp":{"source":"iana"},"application/vnd.groove-account":{"source":"iana","extensions":["gac"]},"application/vnd.groove-help":{"source":"iana","extensions":["ghf"]},"application/vnd.groove-identity-message":{"source":"iana","extensions":["gim"]},"application/vnd.groove-injector":{"source":"iana","extensions":["grv"]},"application/vnd.groove-tool-message":{"source":"iana","extensions":["gtm"]},"application/vnd.groove-tool-template":{"source":"iana","extensions":["tpl"]},"application/vnd.groove-vcard":{"source":"iana","extensions":["vcg"]},"application/vnd.hal+json":{"source":"iana","compressible":true},"application/vnd.hal+xml":{"source":"iana","compressible":true,"extensions":["hal"]},"application/vnd.handheld-entertainment+xml":{"source":"iana","compressible":true,"extensions":["zmm"]},"application/vnd.hbci":{"source":"iana","extensions":["hbci"]},"application/vnd.hc+json":{"source":"iana","compressible":true},"application/vnd.hcl-bireports":{"source":"iana"},"application/vnd.hdt":{"source":"iana"},"application/vnd.heroku+json":{"source":"iana","compressible":true},"application/vnd.hhe.lesson-player":{"source":"iana","extensions":["les"]},"application/vnd.hp-hpgl":{"source":"iana","extensions":["hpgl"]},"application/vnd.hp-hpid":{"source":"iana","extensions":["hpid"]},"application/vnd.hp-hps":{"source":"iana","extensions":["hps"]},"application/vnd.hp-jlyt":{"source":"iana","extensions":["jlt"]},"application/vnd.hp-pcl":{"source":"iana","extensions":["pcl"]},"application/vnd.hp-pclxl":{"source":"iana","extensions":["pclxl"]},"application/vnd.httphone":{"source":"iana"},"application/vnd.hydrostatix.sof-data":{"source":"iana","extensions":["sfd-hdstx"]},"application/vnd.hyper+json":{"source":"iana","compressible":true},"application/vnd.hyper-item+json":{"source":"iana","compressible":true},"application/vnd.hyperdrive+json":{"source":"iana","compressible":true},"application/vnd.hzn-3d-crossword":{"source":"iana"},"application/vnd.ibm.afplinedata":{"source":"iana"},"application/vnd.ibm.electronic-media":{"source":"iana"},"application/vnd.ibm.minipay":{"source":"iana","extensions":["mpy"]},"application/vnd.ibm.modcap":{"source":"iana","extensions":["afp","listafp","list3820"]},"application/vnd.ibm.rights-management":{"source":"iana","extensions":["irm"]},"application/vnd.ibm.secure-container":{"source":"iana","extensions":["sc"]},"application/vnd.iccprofile":{"source":"iana","extensions":["icc","icm"]},"application/vnd.ieee.1905":{"source":"iana"},"application/vnd.igloader":{"source":"iana","extensions":["igl"]},"application/vnd.imagemeter.folder+zip":{"source":"iana","compressible":false},"application/vnd.imagemeter.image+zip":{"source":"iana","compressible":false},"application/vnd.immervision-ivp":{"source":"iana","extensions":["ivp"]},"application/vnd.immervision-ivu":{"source":"iana","extensions":["ivu"]},"application/vnd.ims.imsccv1p1":{"source":"iana"},"application/vnd.ims.imsccv1p2":{"source":"iana"},"application/vnd.ims.imsccv1p3":{"source":"iana"},"application/vnd.ims.lis.v2.result+json":{"source":"iana","compressible":true},"application/vnd.ims.lti.v2.toolconsumerprofile+json":{"source":"iana","compressible":true},"application/vnd.ims.lti.v2.toolproxy+json":{"source":"iana","compressible":true},"application/vnd.ims.lti.v2.toolproxy.id+json":{"source":"iana","compressible":true},"application/vnd.ims.lti.v2.toolsettings+json":{"source":"iana","compressible":true},"application/vnd.ims.lti.v2.toolsettings.simple+json":{"source":"iana","compressible":true},"application/vnd.informedcontrol.rms+xml":{"source":"iana","compressible":true},"application/vnd.informix-visionary":{"source":"iana"},"application/vnd.infotech.project":{"source":"iana"},"application/vnd.infotech.project+xml":{"source":"iana","compressible":true},"application/vnd.innopath.wamp.notification":{"source":"iana"},"application/vnd.insors.igm":{"source":"iana","extensions":["igm"]},"application/vnd.intercon.formnet":{"source":"iana","extensions":["xpw","xpx"]},"application/vnd.intergeo":{"source":"iana","extensions":["i2g"]},"application/vnd.intertrust.digibox":{"source":"iana"},"application/vnd.intertrust.nncp":{"source":"iana"},"application/vnd.intu.qbo":{"source":"iana","extensions":["qbo"]},"application/vnd.intu.qfx":{"source":"iana","extensions":["qfx"]},"application/vnd.iptc.g2.catalogitem+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.conceptitem+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.knowledgeitem+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.newsitem+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.newsmessage+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.packageitem+xml":{"source":"iana","compressible":true},"application/vnd.iptc.g2.planningitem+xml":{"source":"iana","compressible":true},"application/vnd.ipunplugged.rcprofile":{"source":"iana","extensions":["rcprofile"]},"application/vnd.irepository.package+xml":{"source":"iana","compressible":true,"extensions":["irp"]},"application/vnd.is-xpr":{"source":"iana","extensions":["xpr"]},"application/vnd.isac.fcs":{"source":"iana","extensions":["fcs"]},"application/vnd.iso11783-10+zip":{"source":"iana","compressible":false},"application/vnd.jam":{"source":"iana","extensions":["jam"]},"application/vnd.japannet-directory-service":{"source":"iana"},"application/vnd.japannet-jpnstore-wakeup":{"source":"iana"},"application/vnd.japannet-payment-wakeup":{"source":"iana"},"application/vnd.japannet-registration":{"source":"iana"},"application/vnd.japannet-registration-wakeup":{"source":"iana"},"application/vnd.japannet-setstore-wakeup":{"source":"iana"},"application/vnd.japannet-verification":{"source":"iana"},"application/vnd.japannet-verification-wakeup":{"source":"iana"},"application/vnd.jcp.javame.midlet-rms":{"source":"iana","extensions":["rms"]},"application/vnd.jisp":{"source":"iana","extensions":["jisp"]},"application/vnd.joost.joda-archive":{"source":"iana","extensions":["joda"]},"application/vnd.jsk.isdn-ngn":{"source":"iana"},"application/vnd.kahootz":{"source":"iana","extensions":["ktz","ktr"]},"application/vnd.kde.karbon":{"source":"iana","extensions":["karbon"]},"application/vnd.kde.kchart":{"source":"iana","extensions":["chrt"]},"application/vnd.kde.kformula":{"source":"iana","extensions":["kfo"]},"application/vnd.kde.kivio":{"source":"iana","extensions":["flw"]},"application/vnd.kde.kontour":{"source":"iana","extensions":["kon"]},"application/vnd.kde.kpresenter":{"source":"iana","extensions":["kpr","kpt"]},"application/vnd.kde.kspread":{"source":"iana","extensions":["ksp"]},"application/vnd.kde.kword":{"source":"iana","extensions":["kwd","kwt"]},"application/vnd.kenameaapp":{"source":"iana","extensions":["htke"]},"application/vnd.kidspiration":{"source":"iana","extensions":["kia"]},"application/vnd.kinar":{"source":"iana","extensions":["kne","knp"]},"application/vnd.koan":{"source":"iana","extensions":["skp","skd","skt","skm"]},"application/vnd.kodak-descriptor":{"source":"iana","extensions":["sse"]},"application/vnd.las":{"source":"iana"},"application/vnd.las.las+json":{"source":"iana","compressible":true},"application/vnd.las.las+xml":{"source":"iana","compressible":true,"extensions":["lasxml"]},"application/vnd.laszip":{"source":"iana"},"application/vnd.leap+json":{"source":"iana","compressible":true},"application/vnd.liberty-request+xml":{"source":"iana","compressible":true},"application/vnd.llamagraphics.life-balance.desktop":{"source":"iana","extensions":["lbd"]},"application/vnd.llamagraphics.life-balance.exchange+xml":{"source":"iana","compressible":true,"extensions":["lbe"]},"application/vnd.logipipe.circuit+zip":{"source":"iana","compressible":false},"application/vnd.loom":{"source":"iana"},"application/vnd.lotus-1-2-3":{"source":"iana","extensions":["123"]},"application/vnd.lotus-approach":{"source":"iana","extensions":["apr"]},"application/vnd.lotus-freelance":{"source":"iana","extensions":["pre"]},"application/vnd.lotus-notes":{"source":"iana","extensions":["nsf"]},"application/vnd.lotus-organizer":{"source":"iana","extensions":["org"]},"application/vnd.lotus-screencam":{"source":"iana","extensions":["scm"]},"application/vnd.lotus-wordpro":{"source":"iana","extensions":["lwp"]},"application/vnd.macports.portpkg":{"source":"iana","extensions":["portpkg"]},"application/vnd.mapbox-vector-tile":{"source":"iana","extensions":["mvt"]},"application/vnd.marlin.drm.actiontoken+xml":{"source":"iana","compressible":true},"application/vnd.marlin.drm.conftoken+xml":{"source":"iana","compressible":true},"application/vnd.marlin.drm.license+xml":{"source":"iana","compressible":true},"application/vnd.marlin.drm.mdcf":{"source":"iana"},"application/vnd.mason+json":{"source":"iana","compressible":true},"application/vnd.maxmind.maxmind-db":{"source":"iana"},"application/vnd.mcd":{"source":"iana","extensions":["mcd"]},"application/vnd.medcalcdata":{"source":"iana","extensions":["mc1"]},"application/vnd.mediastation.cdkey":{"source":"iana","extensions":["cdkey"]},"application/vnd.meridian-slingshot":{"source":"iana"},"application/vnd.mfer":{"source":"iana","extensions":["mwf"]},"application/vnd.mfmp":{"source":"iana","extensions":["mfm"]},"application/vnd.micro+json":{"source":"iana","compressible":true},"application/vnd.micrografx.flo":{"source":"iana","extensions":["flo"]},"application/vnd.micrografx.igx":{"source":"iana","extensions":["igx"]},"application/vnd.microsoft.portable-executable":{"source":"iana"},"application/vnd.microsoft.windows.thumbnail-cache":{"source":"iana"},"application/vnd.miele+json":{"source":"iana","compressible":true},"application/vnd.mif":{"source":"iana","extensions":["mif"]},"application/vnd.minisoft-hp3000-save":{"source":"iana"},"application/vnd.mitsubishi.misty-guard.trustweb":{"source":"iana"},"application/vnd.mobius.daf":{"source":"iana","extensions":["daf"]},"application/vnd.mobius.dis":{"source":"iana","extensions":["dis"]},"application/vnd.mobius.mbk":{"source":"iana","extensions":["mbk"]},"application/vnd.mobius.mqy":{"source":"iana","extensions":["mqy"]},"application/vnd.mobius.msl":{"source":"iana","extensions":["msl"]},"application/vnd.mobius.plc":{"source":"iana","extensions":["plc"]},"application/vnd.mobius.txf":{"source":"iana","extensions":["txf"]},"application/vnd.mophun.application":{"source":"iana","extensions":["mpn"]},"application/vnd.mophun.certificate":{"source":"iana","extensions":["mpc"]},"application/vnd.motorola.flexsuite":{"source":"iana"},"application/vnd.motorola.flexsuite.adsi":{"source":"iana"},"application/vnd.motorola.flexsuite.fis":{"source":"iana"},"application/vnd.motorola.flexsuite.gotap":{"source":"iana"},"application/vnd.motorola.flexsuite.kmr":{"source":"iana"},"application/vnd.motorola.flexsuite.ttc":{"source":"iana"},"application/vnd.motorola.flexsuite.wem":{"source":"iana"},"application/vnd.motorola.iprm":{"source":"iana"},"application/vnd.mozilla.xul+xml":{"source":"iana","compressible":true,"extensions":["xul"]},"application/vnd.ms-3mfdocument":{"source":"iana"},"application/vnd.ms-artgalry":{"source":"iana","extensions":["cil"]},"application/vnd.ms-asf":{"source":"iana"},"application/vnd.ms-cab-compressed":{"source":"iana","extensions":["cab"]},"application/vnd.ms-color.iccprofile":{"source":"apache"},"application/vnd.ms-excel":{"source":"iana","compressible":false,"extensions":["xls","xlm","xla","xlc","xlt","xlw"]},"application/vnd.ms-excel.addin.macroenabled.12":{"source":"iana","extensions":["xlam"]},"application/vnd.ms-excel.sheet.binary.macroenabled.12":{"source":"iana","extensions":["xlsb"]},"application/vnd.ms-excel.sheet.macroenabled.12":{"source":"iana","extensions":["xlsm"]},"application/vnd.ms-excel.template.macroenabled.12":{"source":"iana","extensions":["xltm"]},"application/vnd.ms-fontobject":{"source":"iana","compressible":true,"extensions":["eot"]},"application/vnd.ms-htmlhelp":{"source":"iana","extensions":["chm"]},"application/vnd.ms-ims":{"source":"iana","extensions":["ims"]},"application/vnd.ms-lrm":{"source":"iana","extensions":["lrm"]},"application/vnd.ms-office.activex+xml":{"source":"iana","compressible":true},"application/vnd.ms-officetheme":{"source":"iana","extensions":["thmx"]},"application/vnd.ms-opentype":{"source":"apache","compressible":true},"application/vnd.ms-outlook":{"compressible":false,"extensions":["msg"]},"application/vnd.ms-package.obfuscated-opentype":{"source":"apache"},"application/vnd.ms-pki.seccat":{"source":"apache","extensions":["cat"]},"application/vnd.ms-pki.stl":{"source":"apache","extensions":["stl"]},"application/vnd.ms-playready.initiator+xml":{"source":"iana","compressible":true},"application/vnd.ms-powerpoint":{"source":"iana","compressible":false,"extensions":["ppt","pps","pot"]},"application/vnd.ms-powerpoint.addin.macroenabled.12":{"source":"iana","extensions":["ppam"]},"application/vnd.ms-powerpoint.presentation.macroenabled.12":{"source":"iana","extensions":["pptm"]},"application/vnd.ms-powerpoint.slide.macroenabled.12":{"source":"iana","extensions":["sldm"]},"application/vnd.ms-powerpoint.slideshow.macroenabled.12":{"source":"iana","extensions":["ppsm"]},"application/vnd.ms-powerpoint.template.macroenabled.12":{"source":"iana","extensions":["potm"]},"application/vnd.ms-printdevicecapabilities+xml":{"source":"iana","compressible":true},"application/vnd.ms-printing.printticket+xml":{"source":"apache","compressible":true},"application/vnd.ms-printschematicket+xml":{"source":"iana","compressible":true},"application/vnd.ms-project":{"source":"iana","extensions":["mpp","mpt"]},"application/vnd.ms-tnef":{"source":"iana"},"application/vnd.ms-windows.devicepairing":{"source":"iana"},"application/vnd.ms-windows.nwprinting.oob":{"source":"iana"},"application/vnd.ms-windows.printerpairing":{"source":"iana"},"application/vnd.ms-windows.wsd.oob":{"source":"iana"},"application/vnd.ms-wmdrm.lic-chlg-req":{"source":"iana"},"application/vnd.ms-wmdrm.lic-resp":{"source":"iana"},"application/vnd.ms-wmdrm.meter-chlg-req":{"source":"iana"},"application/vnd.ms-wmdrm.meter-resp":{"source":"iana"},"application/vnd.ms-word.document.macroenabled.12":{"source":"iana","extensions":["docm"]},"application/vnd.ms-word.template.macroenabled.12":{"source":"iana","extensions":["dotm"]},"application/vnd.ms-works":{"source":"iana","extensions":["wps","wks","wcm","wdb"]},"application/vnd.ms-wpl":{"source":"iana","extensions":["wpl"]},"application/vnd.ms-xpsdocument":{"source":"iana","compressible":false,"extensions":["xps"]},"application/vnd.msa-disk-image":{"source":"iana"},"application/vnd.mseq":{"source":"iana","extensions":["mseq"]},"application/vnd.msign":{"source":"iana"},"application/vnd.multiad.creator":{"source":"iana"},"application/vnd.multiad.creator.cif":{"source":"iana"},"application/vnd.music-niff":{"source":"iana"},"application/vnd.musician":{"source":"iana","extensions":["mus"]},"application/vnd.muvee.style":{"source":"iana","extensions":["msty"]},"application/vnd.mynfc":{"source":"iana","extensions":["taglet"]},"application/vnd.ncd.control":{"source":"iana"},"application/vnd.ncd.reference":{"source":"iana"},"application/vnd.nearst.inv+json":{"source":"iana","compressible":true},"application/vnd.nebumind.line":{"source":"iana"},"application/vnd.nervana":{"source":"iana"},"application/vnd.netfpx":{"source":"iana"},"application/vnd.neurolanguage.nlu":{"source":"iana","extensions":["nlu"]},"application/vnd.nimn":{"source":"iana"},"application/vnd.nintendo.nitro.rom":{"source":"iana"},"application/vnd.nintendo.snes.rom":{"source":"iana"},"application/vnd.nitf":{"source":"iana","extensions":["ntf","nitf"]},"application/vnd.noblenet-directory":{"source":"iana","extensions":["nnd"]},"application/vnd.noblenet-sealer":{"source":"iana","extensions":["nns"]},"application/vnd.noblenet-web":{"source":"iana","extensions":["nnw"]},"application/vnd.nokia.catalogs":{"source":"iana"},"application/vnd.nokia.conml+wbxml":{"source":"iana"},"application/vnd.nokia.conml+xml":{"source":"iana","compressible":true},"application/vnd.nokia.iptv.config+xml":{"source":"iana","compressible":true},"application/vnd.nokia.isds-radio-presets":{"source":"iana"},"application/vnd.nokia.landmark+wbxml":{"source":"iana"},"application/vnd.nokia.landmark+xml":{"source":"iana","compressible":true},"application/vnd.nokia.landmarkcollection+xml":{"source":"iana","compressible":true},"application/vnd.nokia.n-gage.ac+xml":{"source":"iana","compressible":true,"extensions":["ac"]},"application/vnd.nokia.n-gage.data":{"source":"iana","extensions":["ngdat"]},"application/vnd.nokia.n-gage.symbian.install":{"source":"iana","extensions":["n-gage"]},"application/vnd.nokia.ncd":{"source":"iana"},"application/vnd.nokia.pcd+wbxml":{"source":"iana"},"application/vnd.nokia.pcd+xml":{"source":"iana","compressible":true},"application/vnd.nokia.radio-preset":{"source":"iana","extensions":["rpst"]},"application/vnd.nokia.radio-presets":{"source":"iana","extensions":["rpss"]},"application/vnd.novadigm.edm":{"source":"iana","extensions":["edm"]},"application/vnd.novadigm.edx":{"source":"iana","extensions":["edx"]},"application/vnd.novadigm.ext":{"source":"iana","extensions":["ext"]},"application/vnd.ntt-local.content-share":{"source":"iana"},"application/vnd.ntt-local.file-transfer":{"source":"iana"},"application/vnd.ntt-local.ogw_remote-access":{"source":"iana"},"application/vnd.ntt-local.sip-ta_remote":{"source":"iana"},"application/vnd.ntt-local.sip-ta_tcp_stream":{"source":"iana"},"application/vnd.oasis.opendocument.chart":{"source":"iana","extensions":["odc"]},"application/vnd.oasis.opendocument.chart-template":{"source":"iana","extensions":["otc"]},"application/vnd.oasis.opendocument.database":{"source":"iana","extensions":["odb"]},"application/vnd.oasis.opendocument.formula":{"source":"iana","extensions":["odf"]},"application/vnd.oasis.opendocument.formula-template":{"source":"iana","extensions":["odft"]},"application/vnd.oasis.opendocument.graphics":{"source":"iana","compressible":false,"extensions":["odg"]},"application/vnd.oasis.opendocument.graphics-template":{"source":"iana","extensions":["otg"]},"application/vnd.oasis.opendocument.image":{"source":"iana","extensions":["odi"]},"application/vnd.oasis.opendocument.image-template":{"source":"iana","extensions":["oti"]},"application/vnd.oasis.opendocument.presentation":{"source":"iana","compressible":false,"extensions":["odp"]},"application/vnd.oasis.opendocument.presentation-template":{"source":"iana","extensions":["otp"]},"application/vnd.oasis.opendocument.spreadsheet":{"source":"iana","compressible":false,"extensions":["ods"]},"application/vnd.oasis.opendocument.spreadsheet-template":{"source":"iana","extensions":["ots"]},"application/vnd.oasis.opendocument.text":{"source":"iana","compressible":false,"extensions":["odt"]},"application/vnd.oasis.opendocument.text-master":{"source":"iana","extensions":["odm"]},"application/vnd.oasis.opendocument.text-template":{"source":"iana","extensions":["ott"]},"application/vnd.oasis.opendocument.text-web":{"source":"iana","extensions":["oth"]},"application/vnd.obn":{"source":"iana"},"application/vnd.ocf+cbor":{"source":"iana"},"application/vnd.oci.image.manifest.v1+json":{"source":"iana","compressible":true},"application/vnd.oftn.l10n+json":{"source":"iana","compressible":true},"application/vnd.oipf.contentaccessdownload+xml":{"source":"iana","compressible":true},"application/vnd.oipf.contentaccessstreaming+xml":{"source":"iana","compressible":true},"application/vnd.oipf.cspg-hexbinary":{"source":"iana"},"application/vnd.oipf.dae.svg+xml":{"source":"iana","compressible":true},"application/vnd.oipf.dae.xhtml+xml":{"source":"iana","compressible":true},"application/vnd.oipf.mippvcontrolmessage+xml":{"source":"iana","compressible":true},"application/vnd.oipf.pae.gem":{"source":"iana"},"application/vnd.oipf.spdiscovery+xml":{"source":"iana","compressible":true},"application/vnd.oipf.spdlist+xml":{"source":"iana","compressible":true},"application/vnd.oipf.ueprofile+xml":{"source":"iana","compressible":true},"application/vnd.oipf.userprofile+xml":{"source":"iana","compressible":true},"application/vnd.olpc-sugar":{"source":"iana","extensions":["xo"]},"application/vnd.oma-scws-config":{"source":"iana"},"application/vnd.oma-scws-http-request":{"source":"iana"},"application/vnd.oma-scws-http-response":{"source":"iana"},"application/vnd.oma.bcast.associated-procedure-parameter+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.drm-trigger+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.imd+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.ltkm":{"source":"iana"},"application/vnd.oma.bcast.notification+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.provisioningtrigger":{"source":"iana"},"application/vnd.oma.bcast.sgboot":{"source":"iana"},"application/vnd.oma.bcast.sgdd+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.sgdu":{"source":"iana"},"application/vnd.oma.bcast.simple-symbol-container":{"source":"iana"},"application/vnd.oma.bcast.smartcard-trigger+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.sprov+xml":{"source":"iana","compressible":true},"application/vnd.oma.bcast.stkm":{"source":"iana"},"application/vnd.oma.cab-address-book+xml":{"source":"iana","compressible":true},"application/vnd.oma.cab-feature-handler+xml":{"source":"iana","compressible":true},"application/vnd.oma.cab-pcc+xml":{"source":"iana","compressible":true},"application/vnd.oma.cab-subs-invite+xml":{"source":"iana","compressible":true},"application/vnd.oma.cab-user-prefs+xml":{"source":"iana","compressible":true},"application/vnd.oma.dcd":{"source":"iana"},"application/vnd.oma.dcdc":{"source":"iana"},"application/vnd.oma.dd2+xml":{"source":"iana","compressible":true,"extensions":["dd2"]},"application/vnd.oma.drm.risd+xml":{"source":"iana","compressible":true},"application/vnd.oma.group-usage-list+xml":{"source":"iana","compressible":true},"application/vnd.oma.lwm2m+cbor":{"source":"iana"},"application/vnd.oma.lwm2m+json":{"source":"iana","compressible":true},"application/vnd.oma.lwm2m+tlv":{"source":"iana"},"application/vnd.oma.pal+xml":{"source":"iana","compressible":true},"application/vnd.oma.poc.detailed-progress-report+xml":{"source":"iana","compressible":true},"application/vnd.oma.poc.final-report+xml":{"source":"iana","compressible":true},"application/vnd.oma.poc.groups+xml":{"source":"iana","compressible":true},"application/vnd.oma.poc.invocation-descriptor+xml":{"source":"iana","compressible":true},"application/vnd.oma.poc.optimized-progress-report+xml":{"source":"iana","compressible":true},"application/vnd.oma.push":{"source":"iana"},"application/vnd.oma.scidm.messages+xml":{"source":"iana","compressible":true},"application/vnd.oma.xcap-directory+xml":{"source":"iana","compressible":true},"application/vnd.omads-email+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/vnd.omads-file+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/vnd.omads-folder+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/vnd.omaloc-supl-init":{"source":"iana"},"application/vnd.onepager":{"source":"iana"},"application/vnd.onepagertamp":{"source":"iana"},"application/vnd.onepagertamx":{"source":"iana"},"application/vnd.onepagertat":{"source":"iana"},"application/vnd.onepagertatp":{"source":"iana"},"application/vnd.onepagertatx":{"source":"iana"},"application/vnd.openblox.game+xml":{"source":"iana","compressible":true,"extensions":["obgx"]},"application/vnd.openblox.game-binary":{"source":"iana"},"application/vnd.openeye.oeb":{"source":"iana"},"application/vnd.openofficeorg.extension":{"source":"apache","extensions":["oxt"]},"application/vnd.openstreetmap.data+xml":{"source":"iana","compressible":true,"extensions":["osm"]},"application/vnd.opentimestamps.ots":{"source":"iana"},"application/vnd.openxmlformats-officedocument.custom-properties+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.customxmlproperties+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawing+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.chart+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.chartshapes+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.diagramcolors+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.diagramdata+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.diagramlayout+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.drawingml.diagramstyle+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.extended-properties+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.commentauthors+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.comments+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.handoutmaster+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.notesmaster+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.notesslide+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.presentation":{"source":"iana","compressible":false,"extensions":["pptx"]},"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.presprops+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.slide":{"source":"iana","extensions":["sldx"]},"application/vnd.openxmlformats-officedocument.presentationml.slide+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.slidelayout+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.slidemaster+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.slideshow":{"source":"iana","extensions":["ppsx"]},"application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.slideupdateinfo+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.tablestyles+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.tags+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.template":{"source":"iana","extensions":["potx"]},"application/vnd.openxmlformats-officedocument.presentationml.template.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.presentationml.viewprops+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.calcchain+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.externallink+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.pivotcacherecords+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.pivottable+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.querytable+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.revisionheaders+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.revisionlog+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedstrings+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":{"source":"iana","compressible":false,"extensions":["xlsx"]},"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.sheetmetadata+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.tablesinglecells+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.template":{"source":"iana","extensions":["xltx"]},"application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.usernames+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.theme+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.themeoverride+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.vmldrawing":{"source":"iana"},"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.document":{"source":"iana","compressible":false,"extensions":["docx"]},"application/vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.fonttable+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.template":{"source":"iana","extensions":["dotx"]},"application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-officedocument.wordprocessingml.websettings+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-package.core-properties+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml":{"source":"iana","compressible":true},"application/vnd.openxmlformats-package.relationships+xml":{"source":"iana","compressible":true},"application/vnd.oracle.resource+json":{"source":"iana","compressible":true},"application/vnd.orange.indata":{"source":"iana"},"application/vnd.osa.netdeploy":{"source":"iana"},"application/vnd.osgeo.mapguide.package":{"source":"iana","extensions":["mgp"]},"application/vnd.osgi.bundle":{"source":"iana"},"application/vnd.osgi.dp":{"source":"iana","extensions":["dp"]},"application/vnd.osgi.subsystem":{"source":"iana","extensions":["esa"]},"application/vnd.otps.ct-kip+xml":{"source":"iana","compressible":true},"application/vnd.oxli.countgraph":{"source":"iana"},"application/vnd.pagerduty+json":{"source":"iana","compressible":true},"application/vnd.palm":{"source":"iana","extensions":["pdb","pqa","oprc"]},"application/vnd.panoply":{"source":"iana"},"application/vnd.paos.xml":{"source":"iana"},"application/vnd.patentdive":{"source":"iana"},"application/vnd.patientecommsdoc":{"source":"iana"},"application/vnd.pawaafile":{"source":"iana","extensions":["paw"]},"application/vnd.pcos":{"source":"iana"},"application/vnd.pg.format":{"source":"iana","extensions":["str"]},"application/vnd.pg.osasli":{"source":"iana","extensions":["ei6"]},"application/vnd.piaccess.application-licence":{"source":"iana"},"application/vnd.picsel":{"source":"iana","extensions":["efif"]},"application/vnd.pmi.widget":{"source":"iana","extensions":["wg"]},"application/vnd.poc.group-advertisement+xml":{"source":"iana","compressible":true},"application/vnd.pocketlearn":{"source":"iana","extensions":["plf"]},"application/vnd.powerbuilder6":{"source":"iana","extensions":["pbd"]},"application/vnd.powerbuilder6-s":{"source":"iana"},"application/vnd.powerbuilder7":{"source":"iana"},"application/vnd.powerbuilder7-s":{"source":"iana"},"application/vnd.powerbuilder75":{"source":"iana"},"application/vnd.powerbuilder75-s":{"source":"iana"},"application/vnd.preminet":{"source":"iana"},"application/vnd.previewsystems.box":{"source":"iana","extensions":["box"]},"application/vnd.proteus.magazine":{"source":"iana","extensions":["mgz"]},"application/vnd.psfs":{"source":"iana"},"application/vnd.publishare-delta-tree":{"source":"iana","extensions":["qps"]},"application/vnd.pvi.ptid1":{"source":"iana","extensions":["ptid"]},"application/vnd.pwg-multiplexed":{"source":"iana"},"application/vnd.pwg-xhtml-print+xml":{"source":"iana","compressible":true},"application/vnd.qualcomm.brew-app-res":{"source":"iana"},"application/vnd.quarantainenet":{"source":"iana"},"application/vnd.quark.quarkxpress":{"source":"iana","extensions":["qxd","qxt","qwd","qwt","qxl","qxb"]},"application/vnd.quobject-quoxdocument":{"source":"iana"},"application/vnd.radisys.moml+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-audit+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-audit-conf+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-audit-conn+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-audit-dialog+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-audit-stream+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-conf+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-base+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-fax-detect+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-fax-sendrecv+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-group+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-speech+xml":{"source":"iana","compressible":true},"application/vnd.radisys.msml-dialog-transform+xml":{"source":"iana","compressible":true},"application/vnd.rainstor.data":{"source":"iana"},"application/vnd.rapid":{"source":"iana"},"application/vnd.rar":{"source":"iana","extensions":["rar"]},"application/vnd.realvnc.bed":{"source":"iana","extensions":["bed"]},"application/vnd.recordare.musicxml":{"source":"iana","extensions":["mxl"]},"application/vnd.recordare.musicxml+xml":{"source":"iana","compressible":true,"extensions":["musicxml"]},"application/vnd.renlearn.rlprint":{"source":"iana"},"application/vnd.resilient.logic":{"source":"iana"},"application/vnd.restful+json":{"source":"iana","compressible":true},"application/vnd.rig.cryptonote":{"source":"iana","extensions":["cryptonote"]},"application/vnd.rim.cod":{"source":"apache","extensions":["cod"]},"application/vnd.rn-realmedia":{"source":"apache","extensions":["rm"]},"application/vnd.rn-realmedia-vbr":{"source":"apache","extensions":["rmvb"]},"application/vnd.route66.link66+xml":{"source":"iana","compressible":true,"extensions":["link66"]},"application/vnd.rs-274x":{"source":"iana"},"application/vnd.ruckus.download":{"source":"iana"},"application/vnd.s3sms":{"source":"iana"},"application/vnd.sailingtracker.track":{"source":"iana","extensions":["st"]},"application/vnd.sar":{"source":"iana"},"application/vnd.sbm.cid":{"source":"iana"},"application/vnd.sbm.mid2":{"source":"iana"},"application/vnd.scribus":{"source":"iana"},"application/vnd.sealed.3df":{"source":"iana"},"application/vnd.sealed.csf":{"source":"iana"},"application/vnd.sealed.doc":{"source":"iana"},"application/vnd.sealed.eml":{"source":"iana"},"application/vnd.sealed.mht":{"source":"iana"},"application/vnd.sealed.net":{"source":"iana"},"application/vnd.sealed.ppt":{"source":"iana"},"application/vnd.sealed.tiff":{"source":"iana"},"application/vnd.sealed.xls":{"source":"iana"},"application/vnd.sealedmedia.softseal.html":{"source":"iana"},"application/vnd.sealedmedia.softseal.pdf":{"source":"iana"},"application/vnd.seemail":{"source":"iana","extensions":["see"]},"application/vnd.seis+json":{"source":"iana","compressible":true},"application/vnd.sema":{"source":"iana","extensions":["sema"]},"application/vnd.semd":{"source":"iana","extensions":["semd"]},"application/vnd.semf":{"source":"iana","extensions":["semf"]},"application/vnd.shade-save-file":{"source":"iana"},"application/vnd.shana.informed.formdata":{"source":"iana","extensions":["ifm"]},"application/vnd.shana.informed.formtemplate":{"source":"iana","extensions":["itp"]},"application/vnd.shana.informed.interchange":{"source":"iana","extensions":["iif"]},"application/vnd.shana.informed.package":{"source":"iana","extensions":["ipk"]},"application/vnd.shootproof+json":{"source":"iana","compressible":true},"application/vnd.shopkick+json":{"source":"iana","compressible":true},"application/vnd.shp":{"source":"iana"},"application/vnd.shx":{"source":"iana"},"application/vnd.sigrok.session":{"source":"iana"},"application/vnd.simtech-mindmapper":{"source":"iana","extensions":["twd","twds"]},"application/vnd.siren+json":{"source":"iana","compressible":true},"application/vnd.smaf":{"source":"iana","extensions":["mmf"]},"application/vnd.smart.notebook":{"source":"iana"},"application/vnd.smart.teacher":{"source":"iana","extensions":["teacher"]},"application/vnd.snesdev-page-table":{"source":"iana"},"application/vnd.software602.filler.form+xml":{"source":"iana","compressible":true,"extensions":["fo"]},"application/vnd.software602.filler.form-xml-zip":{"source":"iana"},"application/vnd.solent.sdkm+xml":{"source":"iana","compressible":true,"extensions":["sdkm","sdkd"]},"application/vnd.spotfire.dxp":{"source":"iana","extensions":["dxp"]},"application/vnd.spotfire.sfs":{"source":"iana","extensions":["sfs"]},"application/vnd.sqlite3":{"source":"iana"},"application/vnd.sss-cod":{"source":"iana"},"application/vnd.sss-dtf":{"source":"iana"},"application/vnd.sss-ntf":{"source":"iana"},"application/vnd.stardivision.calc":{"source":"apache","extensions":["sdc"]},"application/vnd.stardivision.draw":{"source":"apache","extensions":["sda"]},"application/vnd.stardivision.impress":{"source":"apache","extensions":["sdd"]},"application/vnd.stardivision.math":{"source":"apache","extensions":["smf"]},"application/vnd.stardivision.writer":{"source":"apache","extensions":["sdw","vor"]},"application/vnd.stardivision.writer-global":{"source":"apache","extensions":["sgl"]},"application/vnd.stepmania.package":{"source":"iana","extensions":["smzip"]},"application/vnd.stepmania.stepchart":{"source":"iana","extensions":["sm"]},"application/vnd.street-stream":{"source":"iana"},"application/vnd.sun.wadl+xml":{"source":"iana","compressible":true,"extensions":["wadl"]},"application/vnd.sun.xml.calc":{"source":"apache","extensions":["sxc"]},"application/vnd.sun.xml.calc.template":{"source":"apache","extensions":["stc"]},"application/vnd.sun.xml.draw":{"source":"apache","extensions":["sxd"]},"application/vnd.sun.xml.draw.template":{"source":"apache","extensions":["std"]},"application/vnd.sun.xml.impress":{"source":"apache","extensions":["sxi"]},"application/vnd.sun.xml.impress.template":{"source":"apache","extensions":["sti"]},"application/vnd.sun.xml.math":{"source":"apache","extensions":["sxm"]},"application/vnd.sun.xml.writer":{"source":"apache","extensions":["sxw"]},"application/vnd.sun.xml.writer.global":{"source":"apache","extensions":["sxg"]},"application/vnd.sun.xml.writer.template":{"source":"apache","extensions":["stw"]},"application/vnd.sus-calendar":{"source":"iana","extensions":["sus","susp"]},"application/vnd.svd":{"source":"iana","extensions":["svd"]},"application/vnd.swiftview-ics":{"source":"iana"},"application/vnd.sycle+xml":{"source":"iana","compressible":true},"application/vnd.symbian.install":{"source":"apache","extensions":["sis","sisx"]},"application/vnd.syncml+xml":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["xsm"]},"application/vnd.syncml.dm+wbxml":{"source":"iana","charset":"UTF-8","extensions":["bdm"]},"application/vnd.syncml.dm+xml":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["xdm"]},"application/vnd.syncml.dm.notification":{"source":"iana"},"application/vnd.syncml.dmddf+wbxml":{"source":"iana"},"application/vnd.syncml.dmddf+xml":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["ddf"]},"application/vnd.syncml.dmtnds+wbxml":{"source":"iana"},"application/vnd.syncml.dmtnds+xml":{"source":"iana","charset":"UTF-8","compressible":true},"application/vnd.syncml.ds.notification":{"source":"iana"},"application/vnd.tableschema+json":{"source":"iana","compressible":true},"application/vnd.tao.intent-module-archive":{"source":"iana","extensions":["tao"]},"application/vnd.tcpdump.pcap":{"source":"iana","extensions":["pcap","cap","dmp"]},"application/vnd.think-cell.ppttc+json":{"source":"iana","compressible":true},"application/vnd.tmd.mediaflex.api+xml":{"source":"iana","compressible":true},"application/vnd.tml":{"source":"iana"},"application/vnd.tmobile-livetv":{"source":"iana","extensions":["tmo"]},"application/vnd.tri.onesource":{"source":"iana"},"application/vnd.trid.tpt":{"source":"iana","extensions":["tpt"]},"application/vnd.triscape.mxs":{"source":"iana","extensions":["mxs"]},"application/vnd.trueapp":{"source":"iana","extensions":["tra"]},"application/vnd.truedoc":{"source":"iana"},"application/vnd.ubisoft.webplayer":{"source":"iana"},"application/vnd.ufdl":{"source":"iana","extensions":["ufd","ufdl"]},"application/vnd.uiq.theme":{"source":"iana","extensions":["utz"]},"application/vnd.umajin":{"source":"iana","extensions":["umj"]},"application/vnd.unity":{"source":"iana","extensions":["unityweb"]},"application/vnd.uoml+xml":{"source":"iana","compressible":true,"extensions":["uoml"]},"application/vnd.uplanet.alert":{"source":"iana"},"application/vnd.uplanet.alert-wbxml":{"source":"iana"},"application/vnd.uplanet.bearer-choice":{"source":"iana"},"application/vnd.uplanet.bearer-choice-wbxml":{"source":"iana"},"application/vnd.uplanet.cacheop":{"source":"iana"},"application/vnd.uplanet.cacheop-wbxml":{"source":"iana"},"application/vnd.uplanet.channel":{"source":"iana"},"application/vnd.uplanet.channel-wbxml":{"source":"iana"},"application/vnd.uplanet.list":{"source":"iana"},"application/vnd.uplanet.list-wbxml":{"source":"iana"},"application/vnd.uplanet.listcmd":{"source":"iana"},"application/vnd.uplanet.listcmd-wbxml":{"source":"iana"},"application/vnd.uplanet.signal":{"source":"iana"},"application/vnd.uri-map":{"source":"iana"},"application/vnd.valve.source.material":{"source":"iana"},"application/vnd.vcx":{"source":"iana","extensions":["vcx"]},"application/vnd.vd-study":{"source":"iana"},"application/vnd.vectorworks":{"source":"iana"},"application/vnd.vel+json":{"source":"iana","compressible":true},"application/vnd.verimatrix.vcas":{"source":"iana"},"application/vnd.veritone.aion+json":{"source":"iana","compressible":true},"application/vnd.veryant.thin":{"source":"iana"},"application/vnd.ves.encrypted":{"source":"iana"},"application/vnd.vidsoft.vidconference":{"source":"iana"},"application/vnd.visio":{"source":"iana","extensions":["vsd","vst","vss","vsw"]},"application/vnd.visionary":{"source":"iana","extensions":["vis"]},"application/vnd.vividence.scriptfile":{"source":"iana"},"application/vnd.vsf":{"source":"iana","extensions":["vsf"]},"application/vnd.wap.sic":{"source":"iana"},"application/vnd.wap.slc":{"source":"iana"},"application/vnd.wap.wbxml":{"source":"iana","charset":"UTF-8","extensions":["wbxml"]},"application/vnd.wap.wmlc":{"source":"iana","extensions":["wmlc"]},"application/vnd.wap.wmlscriptc":{"source":"iana","extensions":["wmlsc"]},"application/vnd.webturbo":{"source":"iana","extensions":["wtb"]},"application/vnd.wfa.dpp":{"source":"iana"},"application/vnd.wfa.p2p":{"source":"iana"},"application/vnd.wfa.wsc":{"source":"iana"},"application/vnd.windows.devicepairing":{"source":"iana"},"application/vnd.wmc":{"source":"iana"},"application/vnd.wmf.bootstrap":{"source":"iana"},"application/vnd.wolfram.mathematica":{"source":"iana"},"application/vnd.wolfram.mathematica.package":{"source":"iana"},"application/vnd.wolfram.player":{"source":"iana","extensions":["nbp"]},"application/vnd.wordperfect":{"source":"iana","extensions":["wpd"]},"application/vnd.wqd":{"source":"iana","extensions":["wqd"]},"application/vnd.wrq-hp3000-labelled":{"source":"iana"},"application/vnd.wt.stf":{"source":"iana","extensions":["stf"]},"application/vnd.wv.csp+wbxml":{"source":"iana"},"application/vnd.wv.csp+xml":{"source":"iana","compressible":true},"application/vnd.wv.ssp+xml":{"source":"iana","compressible":true},"application/vnd.xacml+json":{"source":"iana","compressible":true},"application/vnd.xara":{"source":"iana","extensions":["xar"]},"application/vnd.xfdl":{"source":"iana","extensions":["xfdl"]},"application/vnd.xfdl.webform":{"source":"iana"},"application/vnd.xmi+xml":{"source":"iana","compressible":true},"application/vnd.xmpie.cpkg":{"source":"iana"},"application/vnd.xmpie.dpkg":{"source":"iana"},"application/vnd.xmpie.plan":{"source":"iana"},"application/vnd.xmpie.ppkg":{"source":"iana"},"application/vnd.xmpie.xlim":{"source":"iana"},"application/vnd.yamaha.hv-dic":{"source":"iana","extensions":["hvd"]},"application/vnd.yamaha.hv-script":{"source":"iana","extensions":["hvs"]},"application/vnd.yamaha.hv-voice":{"source":"iana","extensions":["hvp"]},"application/vnd.yamaha.openscoreformat":{"source":"iana","extensions":["osf"]},"application/vnd.yamaha.openscoreformat.osfpvg+xml":{"source":"iana","compressible":true,"extensions":["osfpvg"]},"application/vnd.yamaha.remote-setup":{"source":"iana"},"application/vnd.yamaha.smaf-audio":{"source":"iana","extensions":["saf"]},"application/vnd.yamaha.smaf-phrase":{"source":"iana","extensions":["spf"]},"application/vnd.yamaha.through-ngn":{"source":"iana"},"application/vnd.yamaha.tunnel-udpencap":{"source":"iana"},"application/vnd.yaoweme":{"source":"iana"},"application/vnd.yellowriver-custom-menu":{"source":"iana","extensions":["cmp"]},"application/vnd.youtube.yt":{"source":"iana"},"application/vnd.zul":{"source":"iana","extensions":["zir","zirz"]},"application/vnd.zzazz.deck+xml":{"source":"iana","compressible":true,"extensions":["zaz"]},"application/voicexml+xml":{"source":"iana","compressible":true,"extensions":["vxml"]},"application/voucher-cms+json":{"source":"iana","compressible":true},"application/vq-rtcpxr":{"source":"iana"},"application/wasm":{"source":"iana","compressible":true,"extensions":["wasm"]},"application/watcherinfo+xml":{"source":"iana","compressible":true},"application/webpush-options+json":{"source":"iana","compressible":true},"application/whoispp-query":{"source":"iana"},"application/whoispp-response":{"source":"iana"},"application/widget":{"source":"iana","extensions":["wgt"]},"application/winhlp":{"source":"apache","extensions":["hlp"]},"application/wita":{"source":"iana"},"application/wordperfect5.1":{"source":"iana"},"application/wsdl+xml":{"source":"iana","compressible":true,"extensions":["wsdl"]},"application/wspolicy+xml":{"source":"iana","compressible":true,"extensions":["wspolicy"]},"application/x-7z-compressed":{"source":"apache","compressible":false,"extensions":["7z"]},"application/x-abiword":{"source":"apache","extensions":["abw"]},"application/x-ace-compressed":{"source":"apache","extensions":["ace"]},"application/x-amf":{"source":"apache"},"application/x-apple-diskimage":{"source":"apache","extensions":["dmg"]},"application/x-arj":{"compressible":false,"extensions":["arj"]},"application/x-authorware-bin":{"source":"apache","extensions":["aab","x32","u32","vox"]},"application/x-authorware-map":{"source":"apache","extensions":["aam"]},"application/x-authorware-seg":{"source":"apache","extensions":["aas"]},"application/x-bcpio":{"source":"apache","extensions":["bcpio"]},"application/x-bdoc":{"compressible":false,"extensions":["bdoc"]},"application/x-bittorrent":{"source":"apache","extensions":["torrent"]},"application/x-blorb":{"source":"apache","extensions":["blb","blorb"]},"application/x-bzip":{"source":"apache","compressible":false,"extensions":["bz"]},"application/x-bzip2":{"source":"apache","compressible":false,"extensions":["bz2","boz"]},"application/x-cbr":{"source":"apache","extensions":["cbr","cba","cbt","cbz","cb7"]},"application/x-cdlink":{"source":"apache","extensions":["vcd"]},"application/x-cfs-compressed":{"source":"apache","extensions":["cfs"]},"application/x-chat":{"source":"apache","extensions":["chat"]},"application/x-chess-pgn":{"source":"apache","extensions":["pgn"]},"application/x-chrome-extension":{"extensions":["crx"]},"application/x-cocoa":{"source":"nginx","extensions":["cco"]},"application/x-compress":{"source":"apache"},"application/x-conference":{"source":"apache","extensions":["nsc"]},"application/x-cpio":{"source":"apache","extensions":["cpio"]},"application/x-csh":{"source":"apache","extensions":["csh"]},"application/x-deb":{"compressible":false},"application/x-debian-package":{"source":"apache","extensions":["deb","udeb"]},"application/x-dgc-compressed":{"source":"apache","extensions":["dgc"]},"application/x-director":{"source":"apache","extensions":["dir","dcr","dxr","cst","cct","cxt","w3d","fgd","swa"]},"application/x-doom":{"source":"apache","extensions":["wad"]},"application/x-dtbncx+xml":{"source":"apache","compressible":true,"extensions":["ncx"]},"application/x-dtbook+xml":{"source":"apache","compressible":true,"extensions":["dtb"]},"application/x-dtbresource+xml":{"source":"apache","compressible":true,"extensions":["res"]},"application/x-dvi":{"source":"apache","compressible":false,"extensions":["dvi"]},"application/x-envoy":{"source":"apache","extensions":["evy"]},"application/x-eva":{"source":"apache","extensions":["eva"]},"application/x-font-bdf":{"source":"apache","extensions":["bdf"]},"application/x-font-dos":{"source":"apache"},"application/x-font-framemaker":{"source":"apache"},"application/x-font-ghostscript":{"source":"apache","extensions":["gsf"]},"application/x-font-libgrx":{"source":"apache"},"application/x-font-linux-psf":{"source":"apache","extensions":["psf"]},"application/x-font-pcf":{"source":"apache","extensions":["pcf"]},"application/x-font-snf":{"source":"apache","extensions":["snf"]},"application/x-font-speedo":{"source":"apache"},"application/x-font-sunos-news":{"source":"apache"},"application/x-font-type1":{"source":"apache","extensions":["pfa","pfb","pfm","afm"]},"application/x-font-vfont":{"source":"apache"},"application/x-freearc":{"source":"apache","extensions":["arc"]},"application/x-futuresplash":{"source":"apache","extensions":["spl"]},"application/x-gca-compressed":{"source":"apache","extensions":["gca"]},"application/x-glulx":{"source":"apache","extensions":["ulx"]},"application/x-gnumeric":{"source":"apache","extensions":["gnumeric"]},"application/x-gramps-xml":{"source":"apache","extensions":["gramps"]},"application/x-gtar":{"source":"apache","extensions":["gtar"]},"application/x-gzip":{"source":"apache"},"application/x-hdf":{"source":"apache","extensions":["hdf"]},"application/x-httpd-php":{"compressible":true,"extensions":["php"]},"application/x-install-instructions":{"source":"apache","extensions":["install"]},"application/x-iso9660-image":{"source":"apache","extensions":["iso"]},"application/x-iwork-keynote-sffkey":{"extensions":["key"]},"application/x-iwork-numbers-sffnumbers":{"extensions":["numbers"]},"application/x-iwork-pages-sffpages":{"extensions":["pages"]},"application/x-java-archive-diff":{"source":"nginx","extensions":["jardiff"]},"application/x-java-jnlp-file":{"source":"apache","compressible":false,"extensions":["jnlp"]},"application/x-javascript":{"compressible":true},"application/x-keepass2":{"extensions":["kdbx"]},"application/x-latex":{"source":"apache","compressible":false,"extensions":["latex"]},"application/x-lua-bytecode":{"extensions":["luac"]},"application/x-lzh-compressed":{"source":"apache","extensions":["lzh","lha"]},"application/x-makeself":{"source":"nginx","extensions":["run"]},"application/x-mie":{"source":"apache","extensions":["mie"]},"application/x-mobipocket-ebook":{"source":"apache","extensions":["prc","mobi"]},"application/x-mpegurl":{"compressible":false},"application/x-ms-application":{"source":"apache","extensions":["application"]},"application/x-ms-shortcut":{"source":"apache","extensions":["lnk"]},"application/x-ms-wmd":{"source":"apache","extensions":["wmd"]},"application/x-ms-wmz":{"source":"apache","extensions":["wmz"]},"application/x-ms-xbap":{"source":"apache","extensions":["xbap"]},"application/x-msaccess":{"source":"apache","extensions":["mdb"]},"application/x-msbinder":{"source":"apache","extensions":["obd"]},"application/x-mscardfile":{"source":"apache","extensions":["crd"]},"application/x-msclip":{"source":"apache","extensions":["clp"]},"application/x-msdos-program":{"extensions":["exe"]},"application/x-msdownload":{"source":"apache","extensions":["exe","dll","com","bat","msi"]},"application/x-msmediaview":{"source":"apache","extensions":["mvb","m13","m14"]},"application/x-msmetafile":{"source":"apache","extensions":["wmf","wmz","emf","emz"]},"application/x-msmoney":{"source":"apache","extensions":["mny"]},"application/x-mspublisher":{"source":"apache","extensions":["pub"]},"application/x-msschedule":{"source":"apache","extensions":["scd"]},"application/x-msterminal":{"source":"apache","extensions":["trm"]},"application/x-mswrite":{"source":"apache","extensions":["wri"]},"application/x-netcdf":{"source":"apache","extensions":["nc","cdf"]},"application/x-ns-proxy-autoconfig":{"compressible":true,"extensions":["pac"]},"application/x-nzb":{"source":"apache","extensions":["nzb"]},"application/x-perl":{"source":"nginx","extensions":["pl","pm"]},"application/x-pilot":{"source":"nginx","extensions":["prc","pdb"]},"application/x-pkcs12":{"source":"apache","compressible":false,"extensions":["p12","pfx"]},"application/x-pkcs7-certificates":{"source":"apache","extensions":["p7b","spc"]},"application/x-pkcs7-certreqresp":{"source":"apache","extensions":["p7r"]},"application/x-pki-message":{"source":"iana"},"application/x-rar-compressed":{"source":"apache","compressible":false,"extensions":["rar"]},"application/x-redhat-package-manager":{"source":"nginx","extensions":["rpm"]},"application/x-research-info-systems":{"source":"apache","extensions":["ris"]},"application/x-sea":{"source":"nginx","extensions":["sea"]},"application/x-sh":{"source":"apache","compressible":true,"extensions":["sh"]},"application/x-shar":{"source":"apache","extensions":["shar"]},"application/x-shockwave-flash":{"source":"apache","compressible":false,"extensions":["swf"]},"application/x-silverlight-app":{"source":"apache","extensions":["xap"]},"application/x-sql":{"source":"apache","extensions":["sql"]},"application/x-stuffit":{"source":"apache","compressible":false,"extensions":["sit"]},"application/x-stuffitx":{"source":"apache","extensions":["sitx"]},"application/x-subrip":{"source":"apache","extensions":["srt"]},"application/x-sv4cpio":{"source":"apache","extensions":["sv4cpio"]},"application/x-sv4crc":{"source":"apache","extensions":["sv4crc"]},"application/x-t3vm-image":{"source":"apache","extensions":["t3"]},"application/x-tads":{"source":"apache","extensions":["gam"]},"application/x-tar":{"source":"apache","compressible":true,"extensions":["tar"]},"application/x-tcl":{"source":"apache","extensions":["tcl","tk"]},"application/x-tex":{"source":"apache","extensions":["tex"]},"application/x-tex-tfm":{"source":"apache","extensions":["tfm"]},"application/x-texinfo":{"source":"apache","extensions":["texinfo","texi"]},"application/x-tgif":{"source":"apache","extensions":["obj"]},"application/x-ustar":{"source":"apache","extensions":["ustar"]},"application/x-virtualbox-hdd":{"compressible":true,"extensions":["hdd"]},"application/x-virtualbox-ova":{"compressible":true,"extensions":["ova"]},"application/x-virtualbox-ovf":{"compressible":true,"extensions":["ovf"]},"application/x-virtualbox-vbox":{"compressible":true,"extensions":["vbox"]},"application/x-virtualbox-vbox-extpack":{"compressible":false,"extensions":["vbox-extpack"]},"application/x-virtualbox-vdi":{"compressible":true,"extensions":["vdi"]},"application/x-virtualbox-vhd":{"compressible":true,"extensions":["vhd"]},"application/x-virtualbox-vmdk":{"compressible":true,"extensions":["vmdk"]},"application/x-wais-source":{"source":"apache","extensions":["src"]},"application/x-web-app-manifest+json":{"compressible":true,"extensions":["webapp"]},"application/x-www-form-urlencoded":{"source":"iana","compressible":true},"application/x-x509-ca-cert":{"source":"iana","extensions":["der","crt","pem"]},"application/x-x509-ca-ra-cert":{"source":"iana"},"application/x-x509-next-ca-cert":{"source":"iana"},"application/x-xfig":{"source":"apache","extensions":["fig"]},"application/x-xliff+xml":{"source":"apache","compressible":true,"extensions":["xlf"]},"application/x-xpinstall":{"source":"apache","compressible":false,"extensions":["xpi"]},"application/x-xz":{"source":"apache","extensions":["xz"]},"application/x-zmachine":{"source":"apache","extensions":["z1","z2","z3","z4","z5","z6","z7","z8"]},"application/x400-bp":{"source":"iana"},"application/xacml+xml":{"source":"iana","compressible":true},"application/xaml+xml":{"source":"apache","compressible":true,"extensions":["xaml"]},"application/xcap-att+xml":{"source":"iana","compressible":true,"extensions":["xav"]},"application/xcap-caps+xml":{"source":"iana","compressible":true,"extensions":["xca"]},"application/xcap-diff+xml":{"source":"iana","compressible":true,"extensions":["xdf"]},"application/xcap-el+xml":{"source":"iana","compressible":true,"extensions":["xel"]},"application/xcap-error+xml":{"source":"iana","compressible":true},"application/xcap-ns+xml":{"source":"iana","compressible":true,"extensions":["xns"]},"application/xcon-conference-info+xml":{"source":"iana","compressible":true},"application/xcon-conference-info-diff+xml":{"source":"iana","compressible":true},"application/xenc+xml":{"source":"iana","compressible":true,"extensions":["xenc"]},"application/xhtml+xml":{"source":"iana","compressible":true,"extensions":["xhtml","xht"]},"application/xhtml-voice+xml":{"source":"apache","compressible":true},"application/xliff+xml":{"source":"iana","compressible":true,"extensions":["xlf"]},"application/xml":{"source":"iana","compressible":true,"extensions":["xml","xsl","xsd","rng"]},"application/xml-dtd":{"source":"iana","compressible":true,"extensions":["dtd"]},"application/xml-external-parsed-entity":{"source":"iana"},"application/xml-patch+xml":{"source":"iana","compressible":true},"application/xmpp+xml":{"source":"iana","compressible":true},"application/xop+xml":{"source":"iana","compressible":true,"extensions":["xop"]},"application/xproc+xml":{"source":"apache","compressible":true,"extensions":["xpl"]},"application/xslt+xml":{"source":"iana","compressible":true,"extensions":["xsl","xslt"]},"application/xspf+xml":{"source":"apache","compressible":true,"extensions":["xspf"]},"application/xv+xml":{"source":"iana","compressible":true,"extensions":["mxml","xhvml","xvml","xvm"]},"application/yang":{"source":"iana","extensions":["yang"]},"application/yang-data+json":{"source":"iana","compressible":true},"application/yang-data+xml":{"source":"iana","compressible":true},"application/yang-patch+json":{"source":"iana","compressible":true},"application/yang-patch+xml":{"source":"iana","compressible":true},"application/yin+xml":{"source":"iana","compressible":true,"extensions":["yin"]},"application/zip":{"source":"iana","compressible":false,"extensions":["zip"]},"application/zlib":{"source":"iana"},"application/zstd":{"source":"iana"},"audio/1d-interleaved-parityfec":{"source":"iana"},"audio/32kadpcm":{"source":"iana"},"audio/3gpp":{"source":"iana","compressible":false,"extensions":["3gpp"]},"audio/3gpp2":{"source":"iana"},"audio/aac":{"source":"iana"},"audio/ac3":{"source":"iana"},"audio/adpcm":{"source":"apache","extensions":["adp"]},"audio/amr":{"source":"iana","extensions":["amr"]},"audio/amr-wb":{"source":"iana"},"audio/amr-wb+":{"source":"iana"},"audio/aptx":{"source":"iana"},"audio/asc":{"source":"iana"},"audio/atrac-advanced-lossless":{"source":"iana"},"audio/atrac-x":{"source":"iana"},"audio/atrac3":{"source":"iana"},"audio/basic":{"source":"iana","compressible":false,"extensions":["au","snd"]},"audio/bv16":{"source":"iana"},"audio/bv32":{"source":"iana"},"audio/clearmode":{"source":"iana"},"audio/cn":{"source":"iana"},"audio/dat12":{"source":"iana"},"audio/dls":{"source":"iana"},"audio/dsr-es201108":{"source":"iana"},"audio/dsr-es202050":{"source":"iana"},"audio/dsr-es202211":{"source":"iana"},"audio/dsr-es202212":{"source":"iana"},"audio/dv":{"source":"iana"},"audio/dvi4":{"source":"iana"},"audio/eac3":{"source":"iana"},"audio/encaprtp":{"source":"iana"},"audio/evrc":{"source":"iana"},"audio/evrc-qcp":{"source":"iana"},"audio/evrc0":{"source":"iana"},"audio/evrc1":{"source":"iana"},"audio/evrcb":{"source":"iana"},"audio/evrcb0":{"source":"iana"},"audio/evrcb1":{"source":"iana"},"audio/evrcnw":{"source":"iana"},"audio/evrcnw0":{"source":"iana"},"audio/evrcnw1":{"source":"iana"},"audio/evrcwb":{"source":"iana"},"audio/evrcwb0":{"source":"iana"},"audio/evrcwb1":{"source":"iana"},"audio/evs":{"source":"iana"},"audio/flexfec":{"source":"iana"},"audio/fwdred":{"source":"iana"},"audio/g711-0":{"source":"iana"},"audio/g719":{"source":"iana"},"audio/g722":{"source":"iana"},"audio/g7221":{"source":"iana"},"audio/g723":{"source":"iana"},"audio/g726-16":{"source":"iana"},"audio/g726-24":{"source":"iana"},"audio/g726-32":{"source":"iana"},"audio/g726-40":{"source":"iana"},"audio/g728":{"source":"iana"},"audio/g729":{"source":"iana"},"audio/g7291":{"source":"iana"},"audio/g729d":{"source":"iana"},"audio/g729e":{"source":"iana"},"audio/gsm":{"source":"iana"},"audio/gsm-efr":{"source":"iana"},"audio/gsm-hr-08":{"source":"iana"},"audio/ilbc":{"source":"iana"},"audio/ip-mr_v2.5":{"source":"iana"},"audio/isac":{"source":"apache"},"audio/l16":{"source":"iana"},"audio/l20":{"source":"iana"},"audio/l24":{"source":"iana","compressible":false},"audio/l8":{"source":"iana"},"audio/lpc":{"source":"iana"},"audio/melp":{"source":"iana"},"audio/melp1200":{"source":"iana"},"audio/melp2400":{"source":"iana"},"audio/melp600":{"source":"iana"},"audio/mhas":{"source":"iana"},"audio/midi":{"source":"apache","extensions":["mid","midi","kar","rmi"]},"audio/mobile-xmf":{"source":"iana","extensions":["mxmf"]},"audio/mp3":{"compressible":false,"extensions":["mp3"]},"audio/mp4":{"source":"iana","compressible":false,"extensions":["m4a","mp4a"]},"audio/mp4a-latm":{"source":"iana"},"audio/mpa":{"source":"iana"},"audio/mpa-robust":{"source":"iana"},"audio/mpeg":{"source":"iana","compressible":false,"extensions":["mpga","mp2","mp2a","mp3","m2a","m3a"]},"audio/mpeg4-generic":{"source":"iana"},"audio/musepack":{"source":"apache"},"audio/ogg":{"source":"iana","compressible":false,"extensions":["oga","ogg","spx","opus"]},"audio/opus":{"source":"iana"},"audio/parityfec":{"source":"iana"},"audio/pcma":{"source":"iana"},"audio/pcma-wb":{"source":"iana"},"audio/pcmu":{"source":"iana"},"audio/pcmu-wb":{"source":"iana"},"audio/prs.sid":{"source":"iana"},"audio/qcelp":{"source":"iana"},"audio/raptorfec":{"source":"iana"},"audio/red":{"source":"iana"},"audio/rtp-enc-aescm128":{"source":"iana"},"audio/rtp-midi":{"source":"iana"},"audio/rtploopback":{"source":"iana"},"audio/rtx":{"source":"iana"},"audio/s3m":{"source":"apache","extensions":["s3m"]},"audio/scip":{"source":"iana"},"audio/silk":{"source":"apache","extensions":["sil"]},"audio/smv":{"source":"iana"},"audio/smv-qcp":{"source":"iana"},"audio/smv0":{"source":"iana"},"audio/sofa":{"source":"iana"},"audio/sp-midi":{"source":"iana"},"audio/speex":{"source":"iana"},"audio/t140c":{"source":"iana"},"audio/t38":{"source":"iana"},"audio/telephone-event":{"source":"iana"},"audio/tetra_acelp":{"source":"iana"},"audio/tetra_acelp_bb":{"source":"iana"},"audio/tone":{"source":"iana"},"audio/tsvcis":{"source":"iana"},"audio/uemclip":{"source":"iana"},"audio/ulpfec":{"source":"iana"},"audio/usac":{"source":"iana"},"audio/vdvi":{"source":"iana"},"audio/vmr-wb":{"source":"iana"},"audio/vnd.3gpp.iufp":{"source":"iana"},"audio/vnd.4sb":{"source":"iana"},"audio/vnd.audiokoz":{"source":"iana"},"audio/vnd.celp":{"source":"iana"},"audio/vnd.cisco.nse":{"source":"iana"},"audio/vnd.cmles.radio-events":{"source":"iana"},"audio/vnd.cns.anp1":{"source":"iana"},"audio/vnd.cns.inf1":{"source":"iana"},"audio/vnd.dece.audio":{"source":"iana","extensions":["uva","uvva"]},"audio/vnd.digital-winds":{"source":"iana","extensions":["eol"]},"audio/vnd.dlna.adts":{"source":"iana"},"audio/vnd.dolby.heaac.1":{"source":"iana"},"audio/vnd.dolby.heaac.2":{"source":"iana"},"audio/vnd.dolby.mlp":{"source":"iana"},"audio/vnd.dolby.mps":{"source":"iana"},"audio/vnd.dolby.pl2":{"source":"iana"},"audio/vnd.dolby.pl2x":{"source":"iana"},"audio/vnd.dolby.pl2z":{"source":"iana"},"audio/vnd.dolby.pulse.1":{"source":"iana"},"audio/vnd.dra":{"source":"iana","extensions":["dra"]},"audio/vnd.dts":{"source":"iana","extensions":["dts"]},"audio/vnd.dts.hd":{"source":"iana","extensions":["dtshd"]},"audio/vnd.dts.uhd":{"source":"iana"},"audio/vnd.dvb.file":{"source":"iana"},"audio/vnd.everad.plj":{"source":"iana"},"audio/vnd.hns.audio":{"source":"iana"},"audio/vnd.lucent.voice":{"source":"iana","extensions":["lvp"]},"audio/vnd.ms-playready.media.pya":{"source":"iana","extensions":["pya"]},"audio/vnd.nokia.mobile-xmf":{"source":"iana"},"audio/vnd.nortel.vbk":{"source":"iana"},"audio/vnd.nuera.ecelp4800":{"source":"iana","extensions":["ecelp4800"]},"audio/vnd.nuera.ecelp7470":{"source":"iana","extensions":["ecelp7470"]},"audio/vnd.nuera.ecelp9600":{"source":"iana","extensions":["ecelp9600"]},"audio/vnd.octel.sbc":{"source":"iana"},"audio/vnd.presonus.multitrack":{"source":"iana"},"audio/vnd.qcelp":{"source":"iana"},"audio/vnd.rhetorex.32kadpcm":{"source":"iana"},"audio/vnd.rip":{"source":"iana","extensions":["rip"]},"audio/vnd.rn-realaudio":{"compressible":false},"audio/vnd.sealedmedia.softseal.mpeg":{"source":"iana"},"audio/vnd.vmx.cvsd":{"source":"iana"},"audio/vnd.wave":{"compressible":false},"audio/vorbis":{"source":"iana","compressible":false},"audio/vorbis-config":{"source":"iana"},"audio/wav":{"compressible":false,"extensions":["wav"]},"audio/wave":{"compressible":false,"extensions":["wav"]},"audio/webm":{"source":"apache","compressible":false,"extensions":["weba"]},"audio/x-aac":{"source":"apache","compressible":false,"extensions":["aac"]},"audio/x-aiff":{"source":"apache","extensions":["aif","aiff","aifc"]},"audio/x-caf":{"source":"apache","compressible":false,"extensions":["caf"]},"audio/x-flac":{"source":"apache","extensions":["flac"]},"audio/x-m4a":{"source":"nginx","extensions":["m4a"]},"audio/x-matroska":{"source":"apache","extensions":["mka"]},"audio/x-mpegurl":{"source":"apache","extensions":["m3u"]},"audio/x-ms-wax":{"source":"apache","extensions":["wax"]},"audio/x-ms-wma":{"source":"apache","extensions":["wma"]},"audio/x-pn-realaudio":{"source":"apache","extensions":["ram","ra"]},"audio/x-pn-realaudio-plugin":{"source":"apache","extensions":["rmp"]},"audio/x-realaudio":{"source":"nginx","extensions":["ra"]},"audio/x-tta":{"source":"apache"},"audio/x-wav":{"source":"apache","extensions":["wav"]},"audio/xm":{"source":"apache","extensions":["xm"]},"chemical/x-cdx":{"source":"apache","extensions":["cdx"]},"chemical/x-cif":{"source":"apache","extensions":["cif"]},"chemical/x-cmdf":{"source":"apache","extensions":["cmdf"]},"chemical/x-cml":{"source":"apache","extensions":["cml"]},"chemical/x-csml":{"source":"apache","extensions":["csml"]},"chemical/x-pdb":{"source":"apache"},"chemical/x-xyz":{"source":"apache","extensions":["xyz"]},"font/collection":{"source":"iana","extensions":["ttc"]},"font/otf":{"source":"iana","compressible":true,"extensions":["otf"]},"font/sfnt":{"source":"iana"},"font/ttf":{"source":"iana","compressible":true,"extensions":["ttf"]},"font/woff":{"source":"iana","extensions":["woff"]},"font/woff2":{"source":"iana","extensions":["woff2"]},"image/aces":{"source":"iana","extensions":["exr"]},"image/apng":{"compressible":false,"extensions":["apng"]},"image/avci":{"source":"iana"},"image/avcs":{"source":"iana"},"image/avif":{"source":"iana","compressible":false,"extensions":["avif"]},"image/bmp":{"source":"iana","compressible":true,"extensions":["bmp"]},"image/cgm":{"source":"iana","extensions":["cgm"]},"image/dicom-rle":{"source":"iana","extensions":["drle"]},"image/emf":{"source":"iana","extensions":["emf"]},"image/fits":{"source":"iana","extensions":["fits"]},"image/g3fax":{"source":"iana","extensions":["g3"]},"image/gif":{"source":"iana","compressible":false,"extensions":["gif"]},"image/heic":{"source":"iana","extensions":["heic"]},"image/heic-sequence":{"source":"iana","extensions":["heics"]},"image/heif":{"source":"iana","extensions":["heif"]},"image/heif-sequence":{"source":"iana","extensions":["heifs"]},"image/hej2k":{"source":"iana","extensions":["hej2"]},"image/hsj2":{"source":"iana","extensions":["hsj2"]},"image/ief":{"source":"iana","extensions":["ief"]},"image/jls":{"source":"iana","extensions":["jls"]},"image/jp2":{"source":"iana","compressible":false,"extensions":["jp2","jpg2"]},"image/jpeg":{"source":"iana","compressible":false,"extensions":["jpeg","jpg","jpe"]},"image/jph":{"source":"iana","extensions":["jph"]},"image/jphc":{"source":"iana","extensions":["jhc"]},"image/jpm":{"source":"iana","compressible":false,"extensions":["jpm"]},"image/jpx":{"source":"iana","compressible":false,"extensions":["jpx","jpf"]},"image/jxr":{"source":"iana","extensions":["jxr"]},"image/jxra":{"source":"iana","extensions":["jxra"]},"image/jxrs":{"source":"iana","extensions":["jxrs"]},"image/jxs":{"source":"iana","extensions":["jxs"]},"image/jxsc":{"source":"iana","extensions":["jxsc"]},"image/jxsi":{"source":"iana","extensions":["jxsi"]},"image/jxss":{"source":"iana","extensions":["jxss"]},"image/ktx":{"source":"iana","extensions":["ktx"]},"image/ktx2":{"source":"iana","extensions":["ktx2"]},"image/naplps":{"source":"iana"},"image/pjpeg":{"compressible":false},"image/png":{"source":"iana","compressible":false,"extensions":["png"]},"image/prs.btif":{"source":"iana","extensions":["btif"]},"image/prs.pti":{"source":"iana","extensions":["pti"]},"image/pwg-raster":{"source":"iana"},"image/sgi":{"source":"apache","extensions":["sgi"]},"image/svg+xml":{"source":"iana","compressible":true,"extensions":["svg","svgz"]},"image/t38":{"source":"iana","extensions":["t38"]},"image/tiff":{"source":"iana","compressible":false,"extensions":["tif","tiff"]},"image/tiff-fx":{"source":"iana","extensions":["tfx"]},"image/vnd.adobe.photoshop":{"source":"iana","compressible":true,"extensions":["psd"]},"image/vnd.airzip.accelerator.azv":{"source":"iana","extensions":["azv"]},"image/vnd.cns.inf2":{"source":"iana"},"image/vnd.dece.graphic":{"source":"iana","extensions":["uvi","uvvi","uvg","uvvg"]},"image/vnd.djvu":{"source":"iana","extensions":["djvu","djv"]},"image/vnd.dvb.subtitle":{"source":"iana","extensions":["sub"]},"image/vnd.dwg":{"source":"iana","extensions":["dwg"]},"image/vnd.dxf":{"source":"iana","extensions":["dxf"]},"image/vnd.fastbidsheet":{"source":"iana","extensions":["fbs"]},"image/vnd.fpx":{"source":"iana","extensions":["fpx"]},"image/vnd.fst":{"source":"iana","extensions":["fst"]},"image/vnd.fujixerox.edmics-mmr":{"source":"iana","extensions":["mmr"]},"image/vnd.fujixerox.edmics-rlc":{"source":"iana","extensions":["rlc"]},"image/vnd.globalgraphics.pgb":{"source":"iana"},"image/vnd.microsoft.icon":{"source":"iana","extensions":["ico"]},"image/vnd.mix":{"source":"iana"},"image/vnd.mozilla.apng":{"source":"iana"},"image/vnd.ms-dds":{"extensions":["dds"]},"image/vnd.ms-modi":{"source":"iana","extensions":["mdi"]},"image/vnd.ms-photo":{"source":"apache","extensions":["wdp"]},"image/vnd.net-fpx":{"source":"iana","extensions":["npx"]},"image/vnd.pco.b16":{"source":"iana","extensions":["b16"]},"image/vnd.radiance":{"source":"iana"},"image/vnd.sealed.png":{"source":"iana"},"image/vnd.sealedmedia.softseal.gif":{"source":"iana"},"image/vnd.sealedmedia.softseal.jpg":{"source":"iana"},"image/vnd.svf":{"source":"iana"},"image/vnd.tencent.tap":{"source":"iana","extensions":["tap"]},"image/vnd.valve.source.texture":{"source":"iana","extensions":["vtf"]},"image/vnd.wap.wbmp":{"source":"iana","extensions":["wbmp"]},"image/vnd.xiff":{"source":"iana","extensions":["xif"]},"image/vnd.zbrush.pcx":{"source":"iana","extensions":["pcx"]},"image/webp":{"source":"apache","extensions":["webp"]},"image/wmf":{"source":"iana","extensions":["wmf"]},"image/x-3ds":{"source":"apache","extensions":["3ds"]},"image/x-cmu-raster":{"source":"apache","extensions":["ras"]},"image/x-cmx":{"source":"apache","extensions":["cmx"]},"image/x-freehand":{"source":"apache","extensions":["fh","fhc","fh4","fh5","fh7"]},"image/x-icon":{"source":"apache","compressible":true,"extensions":["ico"]},"image/x-jng":{"source":"nginx","extensions":["jng"]},"image/x-mrsid-image":{"source":"apache","extensions":["sid"]},"image/x-ms-bmp":{"source":"nginx","compressible":true,"extensions":["bmp"]},"image/x-pcx":{"source":"apache","extensions":["pcx"]},"image/x-pict":{"source":"apache","extensions":["pic","pct"]},"image/x-portable-anymap":{"source":"apache","extensions":["pnm"]},"image/x-portable-bitmap":{"source":"apache","extensions":["pbm"]},"image/x-portable-graymap":{"source":"apache","extensions":["pgm"]},"image/x-portable-pixmap":{"source":"apache","extensions":["ppm"]},"image/x-rgb":{"source":"apache","extensions":["rgb"]},"image/x-tga":{"source":"apache","extensions":["tga"]},"image/x-xbitmap":{"source":"apache","extensions":["xbm"]},"image/x-xcf":{"compressible":false},"image/x-xpixmap":{"source":"apache","extensions":["xpm"]},"image/x-xwindowdump":{"source":"apache","extensions":["xwd"]},"message/cpim":{"source":"iana"},"message/delivery-status":{"source":"iana"},"message/disposition-notification":{"source":"iana","extensions":["disposition-notification"]},"message/external-body":{"source":"iana"},"message/feedback-report":{"source":"iana"},"message/global":{"source":"iana","extensions":["u8msg"]},"message/global-delivery-status":{"source":"iana","extensions":["u8dsn"]},"message/global-disposition-notification":{"source":"iana","extensions":["u8mdn"]},"message/global-headers":{"source":"iana","extensions":["u8hdr"]},"message/http":{"source":"iana","compressible":false},"message/imdn+xml":{"source":"iana","compressible":true},"message/news":{"source":"iana"},"message/partial":{"source":"iana","compressible":false},"message/rfc822":{"source":"iana","compressible":true,"extensions":["eml","mime"]},"message/s-http":{"source":"iana"},"message/sip":{"source":"iana"},"message/sipfrag":{"source":"iana"},"message/tracking-status":{"source":"iana"},"message/vnd.si.simp":{"source":"iana"},"message/vnd.wfa.wsc":{"source":"iana","extensions":["wsc"]},"model/3mf":{"source":"iana","extensions":["3mf"]},"model/e57":{"source":"iana"},"model/gltf+json":{"source":"iana","compressible":true,"extensions":["gltf"]},"model/gltf-binary":{"source":"iana","compressible":true,"extensions":["glb"]},"model/iges":{"source":"iana","compressible":false,"extensions":["igs","iges"]},"model/mesh":{"source":"iana","compressible":false,"extensions":["msh","mesh","silo"]},"model/mtl":{"source":"iana","extensions":["mtl"]},"model/obj":{"source":"iana","extensions":["obj"]},"model/step":{"source":"iana"},"model/step+xml":{"source":"iana","compressible":true,"extensions":["stpx"]},"model/step+zip":{"source":"iana","compressible":false,"extensions":["stpz"]},"model/step-xml+zip":{"source":"iana","compressible":false,"extensions":["stpxz"]},"model/stl":{"source":"iana","extensions":["stl"]},"model/vnd.collada+xml":{"source":"iana","compressible":true,"extensions":["dae"]},"model/vnd.dwf":{"source":"iana","extensions":["dwf"]},"model/vnd.flatland.3dml":{"source":"iana"},"model/vnd.gdl":{"source":"iana","extensions":["gdl"]},"model/vnd.gs-gdl":{"source":"apache"},"model/vnd.gs.gdl":{"source":"iana"},"model/vnd.gtw":{"source":"iana","extensions":["gtw"]},"model/vnd.moml+xml":{"source":"iana","compressible":true},"model/vnd.mts":{"source":"iana","extensions":["mts"]},"model/vnd.opengex":{"source":"iana","extensions":["ogex"]},"model/vnd.parasolid.transmit.binary":{"source":"iana","extensions":["x_b"]},"model/vnd.parasolid.transmit.text":{"source":"iana","extensions":["x_t"]},"model/vnd.pytha.pyox":{"source":"iana"},"model/vnd.rosette.annotated-data-model":{"source":"iana"},"model/vnd.sap.vds":{"source":"iana","extensions":["vds"]},"model/vnd.usdz+zip":{"source":"iana","compressible":false,"extensions":["usdz"]},"model/vnd.valve.source.compiled-map":{"source":"iana","extensions":["bsp"]},"model/vnd.vtu":{"source":"iana","extensions":["vtu"]},"model/vrml":{"source":"iana","compressible":false,"extensions":["wrl","vrml"]},"model/x3d+binary":{"source":"apache","compressible":false,"extensions":["x3db","x3dbz"]},"model/x3d+fastinfoset":{"source":"iana","extensions":["x3db"]},"model/x3d+vrml":{"source":"apache","compressible":false,"extensions":["x3dv","x3dvz"]},"model/x3d+xml":{"source":"iana","compressible":true,"extensions":["x3d","x3dz"]},"model/x3d-vrml":{"source":"iana","extensions":["x3dv"]},"multipart/alternative":{"source":"iana","compressible":false},"multipart/appledouble":{"source":"iana"},"multipart/byteranges":{"source":"iana"},"multipart/digest":{"source":"iana"},"multipart/encrypted":{"source":"iana","compressible":false},"multipart/form-data":{"source":"iana","compressible":false},"multipart/header-set":{"source":"iana"},"multipart/mixed":{"source":"iana"},"multipart/multilingual":{"source":"iana"},"multipart/parallel":{"source":"iana"},"multipart/related":{"source":"iana","compressible":false},"multipart/report":{"source":"iana"},"multipart/signed":{"source":"iana","compressible":false},"multipart/vnd.bint.med-plus":{"source":"iana"},"multipart/voice-message":{"source":"iana"},"multipart/x-mixed-replace":{"source":"iana"},"text/1d-interleaved-parityfec":{"source":"iana"},"text/cache-manifest":{"source":"iana","compressible":true,"extensions":["appcache","manifest"]},"text/calendar":{"source":"iana","extensions":["ics","ifb"]},"text/calender":{"compressible":true},"text/cmd":{"compressible":true},"text/coffeescript":{"extensions":["coffee","litcoffee"]},"text/cql":{"source":"iana"},"text/cql-expression":{"source":"iana"},"text/cql-identifier":{"source":"iana"},"text/css":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["css"]},"text/csv":{"source":"iana","compressible":true,"extensions":["csv"]},"text/csv-schema":{"source":"iana"},"text/directory":{"source":"iana"},"text/dns":{"source":"iana"},"text/ecmascript":{"source":"iana"},"text/encaprtp":{"source":"iana"},"text/enriched":{"source":"iana"},"text/fhirpath":{"source":"iana"},"text/flexfec":{"source":"iana"},"text/fwdred":{"source":"iana"},"text/gff3":{"source":"iana"},"text/grammar-ref-list":{"source":"iana"},"text/html":{"source":"iana","compressible":true,"extensions":["html","htm","shtml"]},"text/jade":{"extensions":["jade"]},"text/javascript":{"source":"iana","compressible":true},"text/jcr-cnd":{"source":"iana"},"text/jsx":{"compressible":true,"extensions":["jsx"]},"text/less":{"compressible":true,"extensions":["less"]},"text/markdown":{"source":"iana","compressible":true,"extensions":["markdown","md"]},"text/mathml":{"source":"nginx","extensions":["mml"]},"text/mdx":{"compressible":true,"extensions":["mdx"]},"text/mizar":{"source":"iana"},"text/n3":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["n3"]},"text/parameters":{"source":"iana","charset":"UTF-8"},"text/parityfec":{"source":"iana"},"text/plain":{"source":"iana","compressible":true,"extensions":["txt","text","conf","def","list","log","in","ini"]},"text/provenance-notation":{"source":"iana","charset":"UTF-8"},"text/prs.fallenstein.rst":{"source":"iana"},"text/prs.lines.tag":{"source":"iana","extensions":["dsc"]},"text/prs.prop.logic":{"source":"iana"},"text/raptorfec":{"source":"iana"},"text/red":{"source":"iana"},"text/rfc822-headers":{"source":"iana"},"text/richtext":{"source":"iana","compressible":true,"extensions":["rtx"]},"text/rtf":{"source":"iana","compressible":true,"extensions":["rtf"]},"text/rtp-enc-aescm128":{"source":"iana"},"text/rtploopback":{"source":"iana"},"text/rtx":{"source":"iana"},"text/sgml":{"source":"iana","extensions":["sgml","sgm"]},"text/shaclc":{"source":"iana"},"text/shex":{"source":"iana","extensions":["shex"]},"text/slim":{"extensions":["slim","slm"]},"text/spdx":{"source":"iana","extensions":["spdx"]},"text/strings":{"source":"iana"},"text/stylus":{"extensions":["stylus","styl"]},"text/t140":{"source":"iana"},"text/tab-separated-values":{"source":"iana","compressible":true,"extensions":["tsv"]},"text/troff":{"source":"iana","extensions":["t","tr","roff","man","me","ms"]},"text/turtle":{"source":"iana","charset":"UTF-8","extensions":["ttl"]},"text/ulpfec":{"source":"iana"},"text/uri-list":{"source":"iana","compressible":true,"extensions":["uri","uris","urls"]},"text/vcard":{"source":"iana","compressible":true,"extensions":["vcard"]},"text/vnd.a":{"source":"iana"},"text/vnd.abc":{"source":"iana"},"text/vnd.ascii-art":{"source":"iana"},"text/vnd.curl":{"source":"iana","extensions":["curl"]},"text/vnd.curl.dcurl":{"source":"apache","extensions":["dcurl"]},"text/vnd.curl.mcurl":{"source":"apache","extensions":["mcurl"]},"text/vnd.curl.scurl":{"source":"apache","extensions":["scurl"]},"text/vnd.debian.copyright":{"source":"iana","charset":"UTF-8"},"text/vnd.dmclientscript":{"source":"iana"},"text/vnd.dvb.subtitle":{"source":"iana","extensions":["sub"]},"text/vnd.esmertec.theme-descriptor":{"source":"iana","charset":"UTF-8"},"text/vnd.ficlab.flt":{"source":"iana"},"text/vnd.fly":{"source":"iana","extensions":["fly"]},"text/vnd.fmi.flexstor":{"source":"iana","extensions":["flx"]},"text/vnd.gml":{"source":"iana"},"text/vnd.graphviz":{"source":"iana","extensions":["gv"]},"text/vnd.hans":{"source":"iana"},"text/vnd.hgl":{"source":"iana"},"text/vnd.in3d.3dml":{"source":"iana","extensions":["3dml"]},"text/vnd.in3d.spot":{"source":"iana","extensions":["spot"]},"text/vnd.iptc.newsml":{"source":"iana"},"text/vnd.iptc.nitf":{"source":"iana"},"text/vnd.latex-z":{"source":"iana"},"text/vnd.motorola.reflex":{"source":"iana"},"text/vnd.ms-mediapackage":{"source":"iana"},"text/vnd.net2phone.commcenter.command":{"source":"iana"},"text/vnd.radisys.msml-basic-layout":{"source":"iana"},"text/vnd.senx.warpscript":{"source":"iana"},"text/vnd.si.uricatalogue":{"source":"iana"},"text/vnd.sosi":{"source":"iana"},"text/vnd.sun.j2me.app-descriptor":{"source":"iana","charset":"UTF-8","extensions":["jad"]},"text/vnd.trolltech.linguist":{"source":"iana","charset":"UTF-8"},"text/vnd.wap.si":{"source":"iana"},"text/vnd.wap.sl":{"source":"iana"},"text/vnd.wap.wml":{"source":"iana","extensions":["wml"]},"text/vnd.wap.wmlscript":{"source":"iana","extensions":["wmls"]},"text/vtt":{"source":"iana","charset":"UTF-8","compressible":true,"extensions":["vtt"]},"text/x-asm":{"source":"apache","extensions":["s","asm"]},"text/x-c":{"source":"apache","extensions":["c","cc","cxx","cpp","h","hh","dic"]},"text/x-component":{"source":"nginx","extensions":["htc"]},"text/x-fortran":{"source":"apache","extensions":["f","for","f77","f90"]},"text/x-gwt-rpc":{"compressible":true},"text/x-handlebars-template":{"extensions":["hbs"]},"text/x-java-source":{"source":"apache","extensions":["java"]},"text/x-jquery-tmpl":{"compressible":true},"text/x-lua":{"extensions":["lua"]},"text/x-markdown":{"compressible":true,"extensions":["mkd"]},"text/x-nfo":{"source":"apache","extensions":["nfo"]},"text/x-opml":{"source":"apache","extensions":["opml"]},"text/x-org":{"compressible":true,"extensions":["org"]},"text/x-pascal":{"source":"apache","extensions":["p","pas"]},"text/x-processing":{"compressible":true,"extensions":["pde"]},"text/x-sass":{"extensions":["sass"]},"text/x-scss":{"extensions":["scss"]},"text/x-setext":{"source":"apache","extensions":["etx"]},"text/x-sfv":{"source":"apache","extensions":["sfv"]},"text/x-suse-ymp":{"compressible":true,"extensions":["ymp"]},"text/x-uuencode":{"source":"apache","extensions":["uu"]},"text/x-vcalendar":{"source":"apache","extensions":["vcs"]},"text/x-vcard":{"source":"apache","extensions":["vcf"]},"text/xml":{"source":"iana","compressible":true,"extensions":["xml"]},"text/xml-external-parsed-entity":{"source":"iana"},"text/yaml":{"compressible":true,"extensions":["yaml","yml"]},"video/1d-interleaved-parityfec":{"source":"iana"},"video/3gpp":{"source":"iana","extensions":["3gp","3gpp"]},"video/3gpp-tt":{"source":"iana"},"video/3gpp2":{"source":"iana","extensions":["3g2"]},"video/av1":{"source":"iana"},"video/bmpeg":{"source":"iana"},"video/bt656":{"source":"iana"},"video/celb":{"source":"iana"},"video/dv":{"source":"iana"},"video/encaprtp":{"source":"iana"},"video/ffv1":{"source":"iana"},"video/flexfec":{"source":"iana"},"video/h261":{"source":"iana","extensions":["h261"]},"video/h263":{"source":"iana","extensions":["h263"]},"video/h263-1998":{"source":"iana"},"video/h263-2000":{"source":"iana"},"video/h264":{"source":"iana","extensions":["h264"]},"video/h264-rcdo":{"source":"iana"},"video/h264-svc":{"source":"iana"},"video/h265":{"source":"iana"},"video/iso.segment":{"source":"iana","extensions":["m4s"]},"video/jpeg":{"source":"iana","extensions":["jpgv"]},"video/jpeg2000":{"source":"iana"},"video/jpm":{"source":"apache","extensions":["jpm","jpgm"]},"video/jxsv":{"source":"iana"},"video/mj2":{"source":"iana","extensions":["mj2","mjp2"]},"video/mp1s":{"source":"iana"},"video/mp2p":{"source":"iana"},"video/mp2t":{"source":"iana","extensions":["ts"]},"video/mp4":{"source":"iana","compressible":false,"extensions":["mp4","mp4v","mpg4"]},"video/mp4v-es":{"source":"iana"},"video/mpeg":{"source":"iana","compressible":false,"extensions":["mpeg","mpg","mpe","m1v","m2v"]},"video/mpeg4-generic":{"source":"iana"},"video/mpv":{"source":"iana"},"video/nv":{"source":"iana"},"video/ogg":{"source":"iana","compressible":false,"extensions":["ogv"]},"video/parityfec":{"source":"iana"},"video/pointer":{"source":"iana"},"video/quicktime":{"source":"iana","compressible":false,"extensions":["qt","mov"]},"video/raptorfec":{"source":"iana"},"video/raw":{"source":"iana"},"video/rtp-enc-aescm128":{"source":"iana"},"video/rtploopback":{"source":"iana"},"video/rtx":{"source":"iana"},"video/scip":{"source":"iana"},"video/smpte291":{"source":"iana"},"video/smpte292m":{"source":"iana"},"video/ulpfec":{"source":"iana"},"video/vc1":{"source":"iana"},"video/vc2":{"source":"iana"},"video/vnd.cctv":{"source":"iana"},"video/vnd.dece.hd":{"source":"iana","extensions":["uvh","uvvh"]},"video/vnd.dece.mobile":{"source":"iana","extensions":["uvm","uvvm"]},"video/vnd.dece.mp4":{"source":"iana"},"video/vnd.dece.pd":{"source":"iana","extensions":["uvp","uvvp"]},"video/vnd.dece.sd":{"source":"iana","extensions":["uvs","uvvs"]},"video/vnd.dece.video":{"source":"iana","extensions":["uvv","uvvv"]},"video/vnd.directv.mpeg":{"source":"iana"},"video/vnd.directv.mpeg-tts":{"source":"iana"},"video/vnd.dlna.mpeg-tts":{"source":"iana"},"video/vnd.dvb.file":{"source":"iana","extensions":["dvb"]},"video/vnd.fvt":{"source":"iana","extensions":["fvt"]},"video/vnd.hns.video":{"source":"iana"},"video/vnd.iptvforum.1dparityfec-1010":{"source":"iana"},"video/vnd.iptvforum.1dparityfec-2005":{"source":"iana"},"video/vnd.iptvforum.2dparityfec-1010":{"source":"iana"},"video/vnd.iptvforum.2dparityfec-2005":{"source":"iana"},"video/vnd.iptvforum.ttsavc":{"source":"iana"},"video/vnd.iptvforum.ttsmpeg2":{"source":"iana"},"video/vnd.motorola.video":{"source":"iana"},"video/vnd.motorola.videop":{"source":"iana"},"video/vnd.mpegurl":{"source":"iana","extensions":["mxu","m4u"]},"video/vnd.ms-playready.media.pyv":{"source":"iana","extensions":["pyv"]},"video/vnd.nokia.interleaved-multimedia":{"source":"iana"},"video/vnd.nokia.mp4vr":{"source":"iana"},"video/vnd.nokia.videovoip":{"source":"iana"},"video/vnd.objectvideo":{"source":"iana"},"video/vnd.radgamettools.bink":{"source":"iana"},"video/vnd.radgamettools.smacker":{"source":"iana"},"video/vnd.sealed.mpeg1":{"source":"iana"},"video/vnd.sealed.mpeg4":{"source":"iana"},"video/vnd.sealed.swf":{"source":"iana"},"video/vnd.sealedmedia.softseal.mov":{"source":"iana"},"video/vnd.uvvu.mp4":{"source":"iana","extensions":["uvu","uvvu"]},"video/vnd.vivo":{"source":"iana","extensions":["viv"]},"video/vnd.youtube.yt":{"source":"iana"},"video/vp8":{"source":"iana"},"video/vp9":{"source":"iana"},"video/webm":{"source":"apache","compressible":false,"extensions":["webm"]},"video/x-f4v":{"source":"apache","extensions":["f4v"]},"video/x-fli":{"source":"apache","extensions":["fli"]},"video/x-flv":{"source":"apache","compressible":false,"extensions":["flv"]},"video/x-m4v":{"source":"apache","extensions":["m4v"]},"video/x-matroska":{"source":"apache","compressible":false,"extensions":["mkv","mk3d","mks"]},"video/x-mng":{"source":"apache","extensions":["mng"]},"video/x-ms-asf":{"source":"apache","extensions":["asf","asx"]},"video/x-ms-vob":{"source":"apache","extensions":["vob"]},"video/x-ms-wm":{"source":"apache","extensions":["wm"]},"video/x-ms-wmv":{"source":"apache","compressible":false,"extensions":["wmv"]},"video/x-ms-wmx":{"source":"apache","extensions":["wmx"]},"video/x-ms-wvx":{"source":"apache","extensions":["wvx"]},"video/x-msvideo":{"source":"apache","extensions":["avi"]},"video/x-sgi-movie":{"source":"apache","extensions":["movie"]},"video/x-smv":{"source":"apache","extensions":["smv"]},"x-conference/x-cooltalk":{"source":"apache","extensions":["ice"]},"x-shader/x-fragment":{"compressible":true},"x-shader/x-vertex":{"compressible":true}}');
+
+/***/ }),
+
+/***/ 51604:
+/***/ ((module) => {
+
+module.exports = /*#__PURE__*/JSON.parse('{"name":"pngquant-bin","version":"5.0.2","description":"`pngquant` wrapper that makes it seamlessly available as a local dependency","license":"MIT","repository":"imagemin/pngquant-bin","author":{"name":"Kevin Mårtensson","email":"kevinmartensson@gmail.com","url":"github.com/kevva"},"maintainers":[{"name":"Sindre Sorhus","email":"sindresorhus@gmail.com","url":"sindresorhus.com"},{"name":"Shinnosuke Watanabe","url":"github.com/shinnn"}],"bin":{"pngquant":"cli.js"},"engines":{"node":">=6"},"scripts":{"postinstall":"node lib/install.js","test":"xo && ava"},"files":["cli.js","index.js","lib","vendor/source"],"keywords":["imagemin","compress","image","img","minify","optimize","png","pngquant"],"dependencies":{"bin-build":"^3.0.0","bin-wrapper":"^4.0.1","execa":"^0.10.0","logalot":"^2.0.0"},"devDependencies":{"ava":"*","bin-check":"^4.0.1","compare-size":"^3.0.0","tempy":"^0.2.1","xo":"*"}}');
 
 /***/ }),
 
@@ -279412,13 +281316,13 @@ function rootDirectory(pathInput) {
 function traversePathUp(startPath) {
 	return {
 		* [Symbol.iterator]() {
-			let currentPath = external_node_path_namespaceObject.resolve(toPath(startPath));
+			let currentPath = path.resolve(toPath(startPath));
 			let previousPath;
 
 			while (previousPath !== currentPath) {
 				yield currentPath;
 				previousPath = currentPath;
-				currentPath = external_node_path_namespaceObject.resolve(currentPath, '..');
+				currentPath = path.resolve(currentPath, '..');
 			}
 		},
 	};
@@ -285109,11445 +287013,10 @@ imagemin.buffer = async (data, {plugins = []} = {}) => {
 	return new Uint8Array(await pPipe(...plugins)(data));
 };
 
-// EXTERNAL MODULE: external "node:buffer"
-var external_node_buffer_ = __nccwpck_require__(4573);
-// EXTERNAL MODULE: ./node_modules/imagemin-pngquant/node_modules/cross-spawn/index.js
-var cross_spawn = __nccwpck_require__(65614);
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/strip-final-newline/index.js
-function stripFinalNewline(input) {
-	const LF = typeof input === 'string' ? '\n' : '\n'.charCodeAt();
-	const CR = typeof input === 'string' ? '\r' : '\r'.charCodeAt();
-
-	if (input[input.length - 1] === LF) {
-		input = input.slice(0, -1);
-	}
-
-	if (input[input.length - 1] === CR) {
-		input = input.slice(0, -1);
-	}
-
-	return input;
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/npm-run-path/node_modules/path-key/index.js
-function pathKey(options = {}) {
-	const {
-		env = process.env,
-		platform = process.platform
-	} = options;
-
-	if (platform !== 'win32') {
-		return 'PATH';
-	}
-
-	return Object.keys(env).reverse().find(key => key.toUpperCase() === 'PATH') || 'Path';
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/npm-run-path/index.js
-
-
-
-
-
-const npmRunPath = ({
-	cwd = external_node_process_namespaceObject.cwd(),
-	path: pathOption = external_node_process_namespaceObject.env[pathKey()],
-	preferLocal = true,
-	execPath = external_node_process_namespaceObject.execPath,
-	addExecPath = true,
-} = {}) => {
-	const cwdString = cwd instanceof URL ? (0,external_node_url_.fileURLToPath)(cwd) : cwd;
-	const cwdPath = external_node_path_namespaceObject.resolve(cwdString);
-	const result = [];
-
-	if (preferLocal) {
-		applyPreferLocal(result, cwdPath);
-	}
-
-	if (addExecPath) {
-		applyExecPath(result, execPath, cwdPath);
-	}
-
-	return [...result, pathOption].join(external_node_path_namespaceObject.delimiter);
-};
-
-const applyPreferLocal = (result, cwdPath) => {
-	let previous;
-
-	while (previous !== cwdPath) {
-		result.push(external_node_path_namespaceObject.join(cwdPath, 'node_modules/.bin'));
-		previous = cwdPath;
-		cwdPath = external_node_path_namespaceObject.resolve(cwdPath, '..');
-	}
-};
-
-// Ensure the running `node` binary is used
-const applyExecPath = (result, execPath, cwdPath) => {
-	const execPathString = execPath instanceof URL ? (0,external_node_url_.fileURLToPath)(execPath) : execPath;
-	result.push(external_node_path_namespaceObject.resolve(cwdPath, execPathString, '..'));
-};
-
-const npmRunPathEnv = ({env = external_node_process_namespaceObject.env, ...options} = {}) => {
-	env = {...env};
-
-	const pathName = pathKey({env});
-	options.path = env[pathName];
-	env[pathName] = npmRunPath(options);
-
-	return env;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/mimic-fn/index.js
-const copyProperty = (to, from, property, ignoreNonConfigurable) => {
-	// `Function#length` should reflect the parameters of `to` not `from` since we keep its body.
-	// `Function#prototype` is non-writable and non-configurable so can never be modified.
-	if (property === 'length' || property === 'prototype') {
-		return;
-	}
-
-	// `Function#arguments` and `Function#caller` should not be copied. They were reported to be present in `Reflect.ownKeys` for some devices in React Native (#41), so we explicitly ignore them here.
-	if (property === 'arguments' || property === 'caller') {
-		return;
-	}
-
-	const toDescriptor = Object.getOwnPropertyDescriptor(to, property);
-	const fromDescriptor = Object.getOwnPropertyDescriptor(from, property);
-
-	if (!canCopyProperty(toDescriptor, fromDescriptor) && ignoreNonConfigurable) {
-		return;
-	}
-
-	Object.defineProperty(to, property, fromDescriptor);
-};
-
-// `Object.defineProperty()` throws if the property exists, is not configurable and either:
-// - one its descriptors is changed
-// - it is non-writable and its value is changed
-const canCopyProperty = function (toDescriptor, fromDescriptor) {
-	return toDescriptor === undefined || toDescriptor.configurable || (
-		toDescriptor.writable === fromDescriptor.writable &&
-		toDescriptor.enumerable === fromDescriptor.enumerable &&
-		toDescriptor.configurable === fromDescriptor.configurable &&
-		(toDescriptor.writable || toDescriptor.value === fromDescriptor.value)
-	);
-};
-
-const changePrototype = (to, from) => {
-	const fromPrototype = Object.getPrototypeOf(from);
-	if (fromPrototype === Object.getPrototypeOf(to)) {
-		return;
-	}
-
-	Object.setPrototypeOf(to, fromPrototype);
-};
-
-const wrappedToString = (withName, fromBody) => `/* Wrapped ${withName}*/\n${fromBody}`;
-
-const toStringDescriptor = Object.getOwnPropertyDescriptor(Function.prototype, 'toString');
-const toStringName = Object.getOwnPropertyDescriptor(Function.prototype.toString, 'name');
-
-// We call `from.toString()` early (not lazily) to ensure `from` can be garbage collected.
-// We use `bind()` instead of a closure for the same reason.
-// Calling `from.toString()` early also allows caching it in case `to.toString()` is called several times.
-const changeToString = (to, from, name) => {
-	const withName = name === '' ? '' : `with ${name.trim()}() `;
-	const newToString = wrappedToString.bind(null, withName, from.toString());
-	// Ensure `to.toString.toString` is non-enumerable and has the same `same`
-	Object.defineProperty(newToString, 'name', toStringName);
-	Object.defineProperty(to, 'toString', {...toStringDescriptor, value: newToString});
-};
-
-function mimicFunction(to, from, {ignoreNonConfigurable = false} = {}) {
-	const {name} = to;
-
-	for (const property of Reflect.ownKeys(from)) {
-		copyProperty(to, from, property, ignoreNonConfigurable);
-	}
-
-	changePrototype(to, from);
-	changeToString(to, from, name);
-
-	return to;
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/onetime/index.js
-
-
-const calledFunctions = new WeakMap();
-
-const onetime = (function_, options = {}) => {
-	if (typeof function_ !== 'function') {
-		throw new TypeError('Expected a function');
-	}
-
-	let returnValue;
-	let callCount = 0;
-	const functionName = function_.displayName || function_.name || '<anonymous>';
-
-	const onetime = function (...arguments_) {
-		calledFunctions.set(onetime, ++callCount);
-
-		if (callCount === 1) {
-			returnValue = function_.apply(this, arguments_);
-			function_ = null;
-		} else if (options.throw === true) {
-			throw new Error(`Function \`${functionName}\` can only be called once`);
-		}
-
-		return returnValue;
-	};
-
-	mimicFunction(onetime, function_);
-	calledFunctions.set(onetime, callCount);
-
-	return onetime;
-};
-
-onetime.callCount = function_ => {
-	if (!calledFunctions.has(function_)) {
-		throw new Error(`The given function \`${function_.name}\` is not wrapped by the \`onetime\` package`);
-	}
-
-	return calledFunctions.get(function_);
-};
-
-/* harmony default export */ const node_modules_onetime = (onetime);
-
-;// CONCATENATED MODULE: external "node:os"
-const external_node_os_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:os");
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/human-signals/build/src/realtime.js
-
-const getRealtimeSignals=()=>{
-const length=SIGRTMAX-SIGRTMIN+1;
-return Array.from({length},getRealtimeSignal)
-};
-
-const getRealtimeSignal=(value,index)=>({
-name:`SIGRT${index+1}`,
-number:SIGRTMIN+index,
-action:"terminate",
-description:"Application-specific signal (realtime)",
-standard:"posix"
-});
-
-const SIGRTMIN=34;
-const SIGRTMAX=64;
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/human-signals/build/src/core.js
-
-
-const SIGNALS=[
-{
-name:"SIGHUP",
-number:1,
-action:"terminate",
-description:"Terminal closed",
-standard:"posix"
-},
-{
-name:"SIGINT",
-number:2,
-action:"terminate",
-description:"User interruption with CTRL-C",
-standard:"ansi"
-},
-{
-name:"SIGQUIT",
-number:3,
-action:"core",
-description:"User interruption with CTRL-\\",
-standard:"posix"
-},
-{
-name:"SIGILL",
-number:4,
-action:"core",
-description:"Invalid machine instruction",
-standard:"ansi"
-},
-{
-name:"SIGTRAP",
-number:5,
-action:"core",
-description:"Debugger breakpoint",
-standard:"posix"
-},
-{
-name:"SIGABRT",
-number:6,
-action:"core",
-description:"Aborted",
-standard:"ansi"
-},
-{
-name:"SIGIOT",
-number:6,
-action:"core",
-description:"Aborted",
-standard:"bsd"
-},
-{
-name:"SIGBUS",
-number:7,
-action:"core",
-description:
-"Bus error due to misaligned, non-existing address or paging error",
-standard:"bsd"
-},
-{
-name:"SIGEMT",
-number:7,
-action:"terminate",
-description:"Command should be emulated but is not implemented",
-standard:"other"
-},
-{
-name:"SIGFPE",
-number:8,
-action:"core",
-description:"Floating point arithmetic error",
-standard:"ansi"
-},
-{
-name:"SIGKILL",
-number:9,
-action:"terminate",
-description:"Forced termination",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGUSR1",
-number:10,
-action:"terminate",
-description:"Application-specific signal",
-standard:"posix"
-},
-{
-name:"SIGSEGV",
-number:11,
-action:"core",
-description:"Segmentation fault",
-standard:"ansi"
-},
-{
-name:"SIGUSR2",
-number:12,
-action:"terminate",
-description:"Application-specific signal",
-standard:"posix"
-},
-{
-name:"SIGPIPE",
-number:13,
-action:"terminate",
-description:"Broken pipe or socket",
-standard:"posix"
-},
-{
-name:"SIGALRM",
-number:14,
-action:"terminate",
-description:"Timeout or timer",
-standard:"posix"
-},
-{
-name:"SIGTERM",
-number:15,
-action:"terminate",
-description:"Termination",
-standard:"ansi"
-},
-{
-name:"SIGSTKFLT",
-number:16,
-action:"terminate",
-description:"Stack is empty or overflowed",
-standard:"other"
-},
-{
-name:"SIGCHLD",
-number:17,
-action:"ignore",
-description:"Child process terminated, paused or unpaused",
-standard:"posix"
-},
-{
-name:"SIGCLD",
-number:17,
-action:"ignore",
-description:"Child process terminated, paused or unpaused",
-standard:"other"
-},
-{
-name:"SIGCONT",
-number:18,
-action:"unpause",
-description:"Unpaused",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGSTOP",
-number:19,
-action:"pause",
-description:"Paused",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGTSTP",
-number:20,
-action:"pause",
-description:"Paused using CTRL-Z or \"suspend\"",
-standard:"posix"
-},
-{
-name:"SIGTTIN",
-number:21,
-action:"pause",
-description:"Background process cannot read terminal input",
-standard:"posix"
-},
-{
-name:"SIGBREAK",
-number:21,
-action:"terminate",
-description:"User interruption with CTRL-BREAK",
-standard:"other"
-},
-{
-name:"SIGTTOU",
-number:22,
-action:"pause",
-description:"Background process cannot write to terminal output",
-standard:"posix"
-},
-{
-name:"SIGURG",
-number:23,
-action:"ignore",
-description:"Socket received out-of-band data",
-standard:"bsd"
-},
-{
-name:"SIGXCPU",
-number:24,
-action:"core",
-description:"Process timed out",
-standard:"bsd"
-},
-{
-name:"SIGXFSZ",
-number:25,
-action:"core",
-description:"File too big",
-standard:"bsd"
-},
-{
-name:"SIGVTALRM",
-number:26,
-action:"terminate",
-description:"Timeout or timer",
-standard:"bsd"
-},
-{
-name:"SIGPROF",
-number:27,
-action:"terminate",
-description:"Timeout or timer",
-standard:"bsd"
-},
-{
-name:"SIGWINCH",
-number:28,
-action:"ignore",
-description:"Terminal window size changed",
-standard:"bsd"
-},
-{
-name:"SIGIO",
-number:29,
-action:"terminate",
-description:"I/O is available",
-standard:"other"
-},
-{
-name:"SIGPOLL",
-number:29,
-action:"terminate",
-description:"Watched event",
-standard:"other"
-},
-{
-name:"SIGINFO",
-number:29,
-action:"ignore",
-description:"Request for process information",
-standard:"other"
-},
-{
-name:"SIGPWR",
-number:30,
-action:"terminate",
-description:"Device running out of power",
-standard:"systemv"
-},
-{
-name:"SIGSYS",
-number:31,
-action:"core",
-description:"Invalid system call",
-standard:"other"
-},
-{
-name:"SIGUNUSED",
-number:31,
-action:"terminate",
-description:"Invalid system call",
-standard:"other"
-}];
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/human-signals/build/src/signals.js
-
-
-
-
-
-
-
-const getSignals=()=>{
-const realtimeSignals=getRealtimeSignals();
-const signals=[...SIGNALS,...realtimeSignals].map(normalizeSignal);
-return signals
-};
-
-
-
-
-
-
-
-const normalizeSignal=({
-name,
-number:defaultNumber,
-description,
-action,
-forced=false,
-standard
-})=>{
-const{
-signals:{[name]:constantSignal}
-}=external_node_os_namespaceObject.constants;
-const supported=constantSignal!==undefined;
-const number=supported?constantSignal:defaultNumber;
-return{name,number,description,supported,action,forced,standard}
-};
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/human-signals/build/src/main.js
-
-
-
-
-
-
-
-const getSignalsByName=()=>{
-const signals=getSignals();
-return Object.fromEntries(signals.map(getSignalByName))
-};
-
-const getSignalByName=({
-name,
-number,
-description,
-supported,
-action,
-forced,
-standard
-})=>[name,{name,number,description,supported,action,forced,standard}];
-
-const signalsByName=getSignalsByName();
-
-
-
-
-const getSignalsByNumber=()=>{
-const signals=getSignals();
-const length=SIGRTMAX+1;
-const signalsA=Array.from({length},(value,number)=>
-getSignalByNumber(number,signals)
-);
-return Object.assign({},...signalsA)
-};
-
-const getSignalByNumber=(number,signals)=>{
-const signal=findSignalByNumber(number,signals);
-
-if(signal===undefined){
-return{}
-}
-
-const{name,description,supported,action,forced,standard}=signal;
-return{
-[number]:{
-name,
-number,
-description,
-supported,
-action,
-forced,
-standard
-}
-}
-};
-
-
-
-const findSignalByNumber=(number,signals)=>{
-const signal=signals.find(({name})=>external_node_os_namespaceObject.constants.signals[name]===number);
-
-if(signal!==undefined){
-return signal
-}
-
-return signals.find((signalA)=>signalA.number===number)
-};
-
-const signalsByNumber=getSignalsByNumber();
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/error.js
-
-
-
-const getErrorPrefix = ({timedOut, timeout, errorCode, signal, signalDescription, exitCode, isCanceled}) => {
-	if (timedOut) {
-		return `timed out after ${timeout} milliseconds`;
-	}
-
-	if (isCanceled) {
-		return 'was canceled';
-	}
-
-	if (errorCode !== undefined) {
-		return `failed with ${errorCode}`;
-	}
-
-	if (signal !== undefined) {
-		return `was killed with ${signal} (${signalDescription})`;
-	}
-
-	if (exitCode !== undefined) {
-		return `failed with exit code ${exitCode}`;
-	}
-
-	return 'failed';
-};
-
-const makeError = ({
-	stdout,
-	stderr,
-	all,
-	error,
-	signal,
-	exitCode,
-	command,
-	escapedCommand,
-	timedOut,
-	isCanceled,
-	killed,
-	parsed: {options: {timeout, cwd = external_node_process_namespaceObject.cwd()}},
-}) => {
-	// `signal` and `exitCode` emitted on `spawned.on('exit')` event can be `null`.
-	// We normalize them to `undefined`
-	exitCode = exitCode === null ? undefined : exitCode;
-	signal = signal === null ? undefined : signal;
-	const signalDescription = signal === undefined ? undefined : signalsByName[signal].description;
-
-	const errorCode = error && error.code;
-
-	const prefix = getErrorPrefix({timedOut, timeout, errorCode, signal, signalDescription, exitCode, isCanceled});
-	const execaMessage = `Command ${prefix}: ${command}`;
-	const isError = Object.prototype.toString.call(error) === '[object Error]';
-	const shortMessage = isError ? `${execaMessage}\n${error.message}` : execaMessage;
-	const message = [shortMessage, stderr, stdout].filter(Boolean).join('\n');
-
-	if (isError) {
-		error.originalMessage = error.message;
-		error.message = message;
-	} else {
-		error = new Error(message);
-	}
-
-	error.shortMessage = shortMessage;
-	error.command = command;
-	error.escapedCommand = escapedCommand;
-	error.exitCode = exitCode;
-	error.signal = signal;
-	error.signalDescription = signalDescription;
-	error.stdout = stdout;
-	error.stderr = stderr;
-	error.cwd = cwd;
-
-	if (all !== undefined) {
-		error.all = all;
-	}
-
-	if ('bufferedData' in error) {
-		delete error.bufferedData;
-	}
-
-	error.failed = true;
-	error.timedOut = Boolean(timedOut);
-	error.isCanceled = isCanceled;
-	error.killed = killed && !timedOut;
-
-	return error;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/stdio.js
-const aliases = ['stdin', 'stdout', 'stderr'];
-
-const hasAlias = options => aliases.some(alias => options[alias] !== undefined);
-
-const normalizeStdio = options => {
-	if (!options) {
-		return;
-	}
-
-	const {stdio} = options;
-
-	if (stdio === undefined) {
-		return aliases.map(alias => options[alias]);
-	}
-
-	if (hasAlias(options)) {
-		throw new Error(`It's not possible to provide \`stdio\` in combination with one of ${aliases.map(alias => `\`${alias}\``).join(', ')}`);
-	}
-
-	if (typeof stdio === 'string') {
-		return stdio;
-	}
-
-	if (!Array.isArray(stdio)) {
-		throw new TypeError(`Expected \`stdio\` to be of type \`string\` or \`Array\`, got \`${typeof stdio}\``);
-	}
-
-	const length = Math.max(stdio.length, aliases.length);
-	return Array.from({length}, (value, index) => stdio[index]);
-};
-
-// `ipc` is pushed unless it is already present
-const stdio_normalizeStdioNode = options => {
-	const stdio = normalizeStdio(options);
-
-	if (stdio === 'ipc') {
-		return 'ipc';
-	}
-
-	if (stdio === undefined || typeof stdio === 'string') {
-		return [stdio, stdio, stdio, 'ipc'];
-	}
-
-	if (stdio.includes('ipc')) {
-		return stdio;
-	}
-
-	return [...stdio, 'ipc'];
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/signal-exit/dist/mjs/signals.js
-/**
- * This is not the set of all possible signals.
- *
- * It IS, however, the set of all signals that trigger
- * an exit on either Linux or BSD systems.  Linux is a
- * superset of the signal names supported on BSD, and
- * the unknown signals just fail to register, so we can
- * catch that easily enough.
- *
- * Windows signals are a different set, since there are
- * signals that terminate Windows processes, but don't
- * terminate (or don't even exist) on Posix systems.
- *
- * Don't bother with SIGKILL.  It's uncatchable, which
- * means that we can't fire any callbacks anyway.
- *
- * If a user does happen to register a handler on a non-
- * fatal signal like SIGWINCH or something, and then
- * exit, it'll end up firing `process.emit('exit')`, so
- * the handler will be fired anyway.
- *
- * SIGBUS, SIGFPE, SIGSEGV and SIGILL, when not raised
- * artificially, inherently leave the process in a
- * state from which it is not safe to try and enter JS
- * listeners.
- */
-const signals = [];
-signals.push('SIGHUP', 'SIGINT', 'SIGTERM');
-if (process.platform !== 'win32') {
-    signals.push('SIGALRM', 'SIGABRT', 'SIGVTALRM', 'SIGXCPU', 'SIGXFSZ', 'SIGUSR2', 'SIGTRAP', 'SIGSYS', 'SIGQUIT', 'SIGIOT'
-    // should detect profiler and enable/disable accordingly.
-    // see #21
-    // 'SIGPROF'
-    );
-}
-if (process.platform === 'linux') {
-    signals.push('SIGIO', 'SIGPOLL', 'SIGPWR', 'SIGSTKFLT');
-}
-//# sourceMappingURL=signals.js.map
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/signal-exit/dist/mjs/index.js
-// Note: since nyc uses this module to output coverage, any lines
-// that are in the direct sync flow of nyc's outputCoverage are
-// ignored, since we can never get coverage for them.
-// grab a reference to node's real process object right away
-
-
-const processOk = (process) => !!process &&
-    typeof process === 'object' &&
-    typeof process.removeListener === 'function' &&
-    typeof process.emit === 'function' &&
-    typeof process.reallyExit === 'function' &&
-    typeof process.listeners === 'function' &&
-    typeof process.kill === 'function' &&
-    typeof process.pid === 'number' &&
-    typeof process.on === 'function';
-const kExitEmitter = Symbol.for('signal-exit emitter');
-const src_global = globalThis;
-const ObjectDefineProperty = Object.defineProperty.bind(Object);
-// teeny special purpose ee
-class Emitter {
-    emitted = {
-        afterExit: false,
-        exit: false,
-    };
-    listeners = {
-        afterExit: [],
-        exit: [],
-    };
-    count = 0;
-    id = Math.random();
-    constructor() {
-        if (src_global[kExitEmitter]) {
-            return src_global[kExitEmitter];
-        }
-        ObjectDefineProperty(src_global, kExitEmitter, {
-            value: this,
-            writable: false,
-            enumerable: false,
-            configurable: false,
-        });
-    }
-    on(ev, fn) {
-        this.listeners[ev].push(fn);
-    }
-    removeListener(ev, fn) {
-        const list = this.listeners[ev];
-        const i = list.indexOf(fn);
-        /* c8 ignore start */
-        if (i === -1) {
-            return;
-        }
-        /* c8 ignore stop */
-        if (i === 0 && list.length === 1) {
-            list.length = 0;
-        }
-        else {
-            list.splice(i, 1);
-        }
-    }
-    emit(ev, code, signal) {
-        if (this.emitted[ev]) {
-            return false;
-        }
-        this.emitted[ev] = true;
-        let ret = false;
-        for (const fn of this.listeners[ev]) {
-            ret = fn(code, signal) === true || ret;
-        }
-        if (ev === 'exit') {
-            ret = this.emit('afterExit', code, signal) || ret;
-        }
-        return ret;
-    }
-}
-class SignalExitBase {
-}
-const signalExitWrap = (handler) => {
-    return {
-        onExit(cb, opts) {
-            return handler.onExit(cb, opts);
-        },
-        load() {
-            return handler.load();
-        },
-        unload() {
-            return handler.unload();
-        },
-    };
-};
-class SignalExitFallback extends SignalExitBase {
-    onExit() {
-        return () => { };
-    }
-    load() { }
-    unload() { }
-}
-class SignalExit extends SignalExitBase {
-    // "SIGHUP" throws an `ENOSYS` error on Windows,
-    // so use a supported signal instead
-    /* c8 ignore start */
-    #hupSig = mjs_process.platform === 'win32' ? 'SIGINT' : 'SIGHUP';
-    /* c8 ignore stop */
-    #emitter = new Emitter();
-    #process;
-    #originalProcessEmit;
-    #originalProcessReallyExit;
-    #sigListeners = {};
-    #loaded = false;
-    constructor(process) {
-        super();
-        this.#process = process;
-        // { <signal>: <listener fn>, ... }
-        this.#sigListeners = {};
-        for (const sig of signals) {
-            this.#sigListeners[sig] = () => {
-                // If there are no other listeners, an exit is coming!
-                // Simplest way: remove us and then re-send the signal.
-                // We know that this will kill the process, so we can
-                // safely emit now.
-                const listeners = this.#process.listeners(sig);
-                let { count } = this.#emitter;
-                // This is a workaround for the fact that signal-exit v3 and signal
-                // exit v4 are not aware of each other, and each will attempt to let
-                // the other handle it, so neither of them do. To correct this, we
-                // detect if we're the only handler *except* for previous versions
-                // of signal-exit, and increment by the count of listeners it has
-                // created.
-                /* c8 ignore start */
-                const p = process;
-                if (typeof p.__signal_exit_emitter__ === 'object' &&
-                    typeof p.__signal_exit_emitter__.count === 'number') {
-                    count += p.__signal_exit_emitter__.count;
-                }
-                /* c8 ignore stop */
-                if (listeners.length === count) {
-                    this.unload();
-                    const ret = this.#emitter.emit('exit', null, sig);
-                    /* c8 ignore start */
-                    const s = sig === 'SIGHUP' ? this.#hupSig : sig;
-                    if (!ret)
-                        process.kill(process.pid, s);
-                    /* c8 ignore stop */
-                }
-            };
-        }
-        this.#originalProcessReallyExit = process.reallyExit;
-        this.#originalProcessEmit = process.emit;
-    }
-    onExit(cb, opts) {
-        /* c8 ignore start */
-        if (!processOk(this.#process)) {
-            return () => { };
-        }
-        /* c8 ignore stop */
-        if (this.#loaded === false) {
-            this.load();
-        }
-        const ev = opts?.alwaysLast ? 'afterExit' : 'exit';
-        this.#emitter.on(ev, cb);
-        return () => {
-            this.#emitter.removeListener(ev, cb);
-            if (this.#emitter.listeners['exit'].length === 0 &&
-                this.#emitter.listeners['afterExit'].length === 0) {
-                this.unload();
-            }
-        };
-    }
-    load() {
-        if (this.#loaded) {
-            return;
-        }
-        this.#loaded = true;
-        // This is the number of onSignalExit's that are in play.
-        // It's important so that we can count the correct number of
-        // listeners on signals, and don't wait for the other one to
-        // handle it instead of us.
-        this.#emitter.count += 1;
-        for (const sig of signals) {
-            try {
-                const fn = this.#sigListeners[sig];
-                if (fn)
-                    this.#process.on(sig, fn);
-            }
-            catch (_) { }
-        }
-        this.#process.emit = (ev, ...a) => {
-            return this.#processEmit(ev, ...a);
-        };
-        this.#process.reallyExit = (code) => {
-            return this.#processReallyExit(code);
-        };
-    }
-    unload() {
-        if (!this.#loaded) {
-            return;
-        }
-        this.#loaded = false;
-        signals.forEach(sig => {
-            const listener = this.#sigListeners[sig];
-            /* c8 ignore start */
-            if (!listener) {
-                throw new Error('Listener not defined for signal: ' + sig);
-            }
-            /* c8 ignore stop */
-            try {
-                this.#process.removeListener(sig, listener);
-                /* c8 ignore start */
-            }
-            catch (_) { }
-            /* c8 ignore stop */
-        });
-        this.#process.emit = this.#originalProcessEmit;
-        this.#process.reallyExit = this.#originalProcessReallyExit;
-        this.#emitter.count -= 1;
-    }
-    #processReallyExit(code) {
-        /* c8 ignore start */
-        if (!processOk(this.#process)) {
-            return 0;
-        }
-        this.#process.exitCode = code || 0;
-        /* c8 ignore stop */
-        this.#emitter.emit('exit', this.#process.exitCode, null);
-        return this.#originalProcessReallyExit.call(this.#process, this.#process.exitCode);
-    }
-    #processEmit(ev, ...args) {
-        const og = this.#originalProcessEmit;
-        if (ev === 'exit' && processOk(this.#process)) {
-            if (typeof args[0] === 'number') {
-                this.#process.exitCode = args[0];
-                /* c8 ignore start */
-            }
-            /* c8 ignore start */
-            const ret = og.call(this.#process, ev, ...args);
-            /* c8 ignore start */
-            this.#emitter.emit('exit', this.#process.exitCode, null);
-            /* c8 ignore stop */
-            return ret;
-        }
-        else {
-            return og.call(this.#process, ev, ...args);
-        }
-    }
-}
-const mjs_process = globalThis.process;
-// wrap so that we call the method on the actual handler, without
-// exporting it directly.
-const { 
-/**
- * Called when the process is exiting, whether via signal, explicit
- * exit, or running out of stuff to do.
- *
- * If the global process object is not suitable for instrumentation,
- * then this will be a no-op.
- *
- * Returns a function that may be used to unload signal-exit.
- */
-onExit, 
-/**
- * Load the listeners.  Likely you never need to call this, unless
- * doing a rather deep integration with signal-exit functionality.
- * Mostly exposed for the benefit of testing.
- *
- * @internal
- */
-load: mjs_load, 
-/**
- * Unload the listeners.  Likely you never need to call this, unless
- * doing a rather deep integration with signal-exit functionality.
- * Mostly exposed for the benefit of testing.
- *
- * @internal
- */
-unload, } = signalExitWrap(processOk(mjs_process) ? new SignalExit(mjs_process) : new SignalExitFallback());
-//# sourceMappingURL=index.js.map
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/kill.js
-
-
-
-const DEFAULT_FORCE_KILL_TIMEOUT = 1000 * 5;
-
-// Monkey-patches `childProcess.kill()` to add `forceKillAfterTimeout` behavior
-const spawnedKill = (kill, signal = 'SIGTERM', options = {}) => {
-	const killResult = kill(signal);
-	setKillTimeout(kill, signal, options, killResult);
-	return killResult;
-};
-
-const setKillTimeout = (kill, signal, options, killResult) => {
-	if (!shouldForceKill(signal, options, killResult)) {
-		return;
-	}
-
-	const timeout = getForceKillAfterTimeout(options);
-	const t = setTimeout(() => {
-		kill('SIGKILL');
-	}, timeout);
-
-	// Guarded because there's no `.unref()` when `execa` is used in the renderer
-	// process in Electron. This cannot be tested since we don't run tests in
-	// Electron.
-	// istanbul ignore else
-	if (t.unref) {
-		t.unref();
-	}
-};
-
-const shouldForceKill = (signal, {forceKillAfterTimeout}, killResult) => isSigterm(signal) && forceKillAfterTimeout !== false && killResult;
-
-const isSigterm = signal => signal === external_node_os_namespaceObject.constants.signals.SIGTERM
-		|| (typeof signal === 'string' && signal.toUpperCase() === 'SIGTERM');
-
-const getForceKillAfterTimeout = ({forceKillAfterTimeout = true}) => {
-	if (forceKillAfterTimeout === true) {
-		return DEFAULT_FORCE_KILL_TIMEOUT;
-	}
-
-	if (!Number.isFinite(forceKillAfterTimeout) || forceKillAfterTimeout < 0) {
-		throw new TypeError(`Expected the \`forceKillAfterTimeout\` option to be a non-negative integer, got \`${forceKillAfterTimeout}\` (${typeof forceKillAfterTimeout})`);
-	}
-
-	return forceKillAfterTimeout;
-};
-
-// `childProcess.cancel()`
-const spawnedCancel = (spawned, context) => {
-	const killResult = spawned.kill();
-
-	if (killResult) {
-		context.isCanceled = true;
-	}
-};
-
-const timeoutKill = (spawned, signal, reject) => {
-	spawned.kill(signal);
-	reject(Object.assign(new Error('Timed out'), {timedOut: true, signal}));
-};
-
-// `timeout` option handling
-const setupTimeout = (spawned, {timeout, killSignal = 'SIGTERM'}, spawnedPromise) => {
-	if (timeout === 0 || timeout === undefined) {
-		return spawnedPromise;
-	}
-
-	let timeoutId;
-	const timeoutPromise = new Promise((resolve, reject) => {
-		timeoutId = setTimeout(() => {
-			timeoutKill(spawned, killSignal, reject);
-		}, timeout);
-	});
-
-	const safeSpawnedPromise = spawnedPromise.finally(() => {
-		clearTimeout(timeoutId);
-	});
-
-	return Promise.race([timeoutPromise, safeSpawnedPromise]);
-};
-
-const validateTimeout = ({timeout}) => {
-	if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
-		throw new TypeError(`Expected the \`timeout\` option to be a non-negative integer, got \`${timeout}\` (${typeof timeout})`);
-	}
-};
-
-// `cleanup` option handling
-const setExitHandler = async (spawned, {cleanup, detached}, timedPromise) => {
-	if (!cleanup || detached) {
-		return timedPromise;
-	}
-
-	const removeExitHandler = onExit(() => {
-		spawned.kill();
-	});
-
-	return timedPromise.finally(() => {
-		removeExitHandler();
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/is-stream/index.js
-function isStream(stream) {
-	return stream !== null
-		&& typeof stream === 'object'
-		&& typeof stream.pipe === 'function';
-}
-
-function isWritableStream(stream) {
-	return isStream(stream)
-		&& stream.writable !== false
-		&& typeof stream._write === 'function'
-		&& typeof stream._writableState === 'object';
-}
-
-function isReadableStream(stream) {
-	return isStream(stream)
-		&& stream.readable !== false
-		&& typeof stream._read === 'function'
-		&& typeof stream._readableState === 'object';
-}
-
-function isDuplexStream(stream) {
-	return isWritableStream(stream)
-		&& isReadableStream(stream);
-}
-
-function isTransformStream(stream) {
-	return isDuplexStream(stream)
-		&& typeof stream._transform === 'function';
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/pipe.js
-
-
-
-
-const isExecaChildProcess = target => target instanceof external_node_child_process_namespaceObject.ChildProcess && typeof target.then === 'function';
-
-const pipeToTarget = (spawned, streamName, target) => {
-	if (typeof target === 'string') {
-		spawned[streamName].pipe((0,external_node_fs_namespaceObject.createWriteStream)(target));
-		return spawned;
-	}
-
-	if (isWritableStream(target)) {
-		spawned[streamName].pipe(target);
-		return spawned;
-	}
-
-	if (!isExecaChildProcess(target)) {
-		throw new TypeError('The second argument must be a string, a stream or an Execa child process.');
-	}
-
-	if (!isWritableStream(target.stdin)) {
-		throw new TypeError('The target child process\'s stdin must be available.');
-	}
-
-	spawned[streamName].pipe(target.stdin);
-	return target;
-};
-
-const addPipeMethods = spawned => {
-	if (spawned.stdout !== null) {
-		spawned.pipeStdout = pipeToTarget.bind(undefined, spawned, 'stdout');
-	}
-
-	if (spawned.stderr !== null) {
-		spawned.pipeStderr = pipeToTarget.bind(undefined, spawned, 'stderr');
-	}
-
-	if (spawned.all !== undefined) {
-		spawned.pipeAll = pipeToTarget.bind(undefined, spawned, 'all');
-	}
-};
-
-;// CONCATENATED MODULE: external "node:timers/promises"
-const external_node_timers_promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/contents.js
-const contents_getStreamContents = async (stream, {init, convertChunk, getSize, truncateChunk, addChunk, getFinalChunk, finalize}, {maxBuffer = Number.POSITIVE_INFINITY} = {}) => {
-	if (!contents_isAsyncIterable(stream)) {
-		throw new Error('The first argument must be a Readable, a ReadableStream, or an async iterable.');
-	}
-
-	const state = init();
-	state.length = 0;
-
-	try {
-		for await (const chunk of stream) {
-			const chunkType = getChunkType(chunk);
-			const convertedChunk = convertChunk[chunkType](chunk, state);
-			appendChunk({convertedChunk, state, getSize, truncateChunk, addChunk, maxBuffer});
-		}
-
-		appendFinalChunk({state, convertChunk, getSize, truncateChunk, addChunk, getFinalChunk, maxBuffer});
-		return finalize(state);
-	} catch (error) {
-		error.bufferedData = finalize(state);
-		throw error;
-	}
-};
-
-const appendFinalChunk = ({state, getSize, truncateChunk, addChunk, getFinalChunk, maxBuffer}) => {
-	const convertedChunk = getFinalChunk(state);
-	if (convertedChunk !== undefined) {
-		appendChunk({convertedChunk, state, getSize, truncateChunk, addChunk, maxBuffer});
-	}
-};
-
-const appendChunk = ({convertedChunk, state, getSize, truncateChunk, addChunk, maxBuffer}) => {
-	const chunkSize = getSize(convertedChunk);
-	const newLength = state.length + chunkSize;
-
-	if (newLength <= maxBuffer) {
-		addNewChunk(convertedChunk, state, addChunk, newLength);
-		return;
-	}
-
-	const truncatedChunk = truncateChunk(convertedChunk, maxBuffer - state.length);
-
-	if (truncatedChunk !== undefined) {
-		addNewChunk(truncatedChunk, state, addChunk, maxBuffer);
-	}
-
-	throw new MaxBufferError();
-};
-
-const addNewChunk = (convertedChunk, state, addChunk, newLength) => {
-	state.contents = addChunk(convertedChunk, state, newLength);
-	state.length = newLength;
-};
-
-const contents_isAsyncIterable = stream => typeof stream === 'object' && stream !== null && typeof stream[Symbol.asyncIterator] === 'function';
-
-const getChunkType = chunk => {
-	const typeOfChunk = typeof chunk;
-
-	if (typeOfChunk === 'string') {
-		return 'string';
-	}
-
-	if (typeOfChunk !== 'object' || chunk === null) {
-		return 'others';
-	}
-
-	// eslint-disable-next-line n/prefer-global/buffer
-	if (globalThis.Buffer?.isBuffer(chunk)) {
-		return 'buffer';
-	}
-
-	const prototypeName = contents_objectToString.call(chunk);
-
-	if (prototypeName === '[object ArrayBuffer]') {
-		return 'arrayBuffer';
-	}
-
-	if (prototypeName === '[object DataView]') {
-		return 'dataView';
-	}
-
-	if (
-		Number.isInteger(chunk.byteLength)
-		&& Number.isInteger(chunk.byteOffset)
-		&& contents_objectToString.call(chunk.buffer) === '[object ArrayBuffer]'
-	) {
-		return 'typedArray';
-	}
-
-	return 'others';
-};
-
-const {toString: contents_objectToString} = Object.prototype;
-
-class MaxBufferError extends Error {
-	name = 'MaxBufferError';
-
-	constructor() {
-		super('maxBuffer exceeded');
-	}
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/utils.js
-const identity = value => value;
-
-const utils_noop = () => undefined;
-
-const getContentsProp = ({contents}) => contents;
-
-const throwObjectStream = chunk => {
-	throw new Error(`Streams in object mode are not supported: ${String(chunk)}`);
-};
-
-const getLengthProp = convertedChunk => convertedChunk.length;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/array.js
-
-
-
-async function getStreamAsArray(stream, options) {
-	return getStreamContents(stream, arrayMethods, options);
-}
-
-const initArray = () => ({contents: []});
-
-const increment = () => 1;
-
-const addArrayChunk = (convertedChunk, {contents}) => {
-	contents.push(convertedChunk);
-	return contents;
-};
-
-const arrayMethods = {
-	init: initArray,
-	convertChunk: {
-		string: identity,
-		buffer: identity,
-		arrayBuffer: identity,
-		dataView: identity,
-		typedArray: identity,
-		others: identity,
-	},
-	getSize: increment,
-	truncateChunk: utils_noop,
-	addChunk: addArrayChunk,
-	getFinalChunk: utils_noop,
-	finalize: getContentsProp,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/array-buffer.js
-
-
-
-async function getStreamAsArrayBuffer(stream, options) {
-	return contents_getStreamContents(stream, arrayBufferMethods, options);
-}
-
-const initArrayBuffer = () => ({contents: new ArrayBuffer(0)});
-
-const useTextEncoder = chunk => textEncoder.encode(chunk);
-const textEncoder = new TextEncoder();
-
-const useUint8Array = chunk => new Uint8Array(chunk);
-
-const useUint8ArrayWithOffset = chunk => new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-
-const truncateArrayBufferChunk = (convertedChunk, chunkSize) => convertedChunk.slice(0, chunkSize);
-
-// `contents` is an increasingly growing `Uint8Array`.
-const addArrayBufferChunk = (convertedChunk, {contents, length: previousLength}, length) => {
-	const newContents = hasArrayBufferResize() ? resizeArrayBuffer(contents, length) : resizeArrayBufferSlow(contents, length);
-	new Uint8Array(newContents).set(convertedChunk, previousLength);
-	return newContents;
-};
-
-// Without `ArrayBuffer.resize()`, `contents` size is always a power of 2.
-// This means its last bytes are zeroes (not stream data), which need to be
-// trimmed at the end with `ArrayBuffer.slice()`.
-const resizeArrayBufferSlow = (contents, length) => {
-	if (length <= contents.byteLength) {
-		return contents;
-	}
-
-	const arrayBuffer = new ArrayBuffer(getNewContentsLength(length));
-	new Uint8Array(arrayBuffer).set(new Uint8Array(contents), 0);
-	return arrayBuffer;
-};
-
-// With `ArrayBuffer.resize()`, `contents` size matches exactly the size of
-// the stream data. It does not include extraneous zeroes to trim at the end.
-// The underlying `ArrayBuffer` does allocate a number of bytes that is a power
-// of 2, but those bytes are only visible after calling `ArrayBuffer.resize()`.
-const resizeArrayBuffer = (contents, length) => {
-	if (length <= contents.maxByteLength) {
-		contents.resize(length);
-		return contents;
-	}
-
-	const arrayBuffer = new ArrayBuffer(length, {maxByteLength: getNewContentsLength(length)});
-	new Uint8Array(arrayBuffer).set(new Uint8Array(contents), 0);
-	return arrayBuffer;
-};
-
-// Retrieve the closest `length` that is both >= and a power of 2
-const getNewContentsLength = length => SCALE_FACTOR ** Math.ceil(Math.log(length) / Math.log(SCALE_FACTOR));
-
-const SCALE_FACTOR = 2;
-
-const finalizeArrayBuffer = ({contents, length}) => hasArrayBufferResize() ? contents : contents.slice(0, length);
-
-// `ArrayBuffer.slice()` is slow. When `ArrayBuffer.resize()` is available
-// (Node >=20.0.0, Safari >=16.4 and Chrome), we can use it instead.
-// eslint-disable-next-line no-warning-comments
-// TODO: remove after dropping support for Node 20.
-// eslint-disable-next-line no-warning-comments
-// TODO: use `ArrayBuffer.transferToFixedLength()` instead once it is available
-const hasArrayBufferResize = () => 'resize' in ArrayBuffer.prototype;
-
-const arrayBufferMethods = {
-	init: initArrayBuffer,
-	convertChunk: {
-		string: useTextEncoder,
-		buffer: useUint8Array,
-		arrayBuffer: useUint8Array,
-		dataView: useUint8ArrayWithOffset,
-		typedArray: useUint8ArrayWithOffset,
-		others: throwObjectStream,
-	},
-	getSize: getLengthProp,
-	truncateChunk: truncateArrayBufferChunk,
-	addChunk: addArrayBufferChunk,
-	getFinalChunk: utils_noop,
-	finalize: finalizeArrayBuffer,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/buffer.js
-
-
-async function getStreamAsBuffer(stream, options) {
-	if (!('Buffer' in globalThis)) {
-		throw new Error('getStreamAsBuffer() is only supported in Node.js');
-	}
-
-	try {
-		return arrayBufferToNodeBuffer(await getStreamAsArrayBuffer(stream, options));
-	} catch (error) {
-		if (error.bufferedData !== undefined) {
-			error.bufferedData = arrayBufferToNodeBuffer(error.bufferedData);
-		}
-
-		throw error;
-	}
-}
-
-// eslint-disable-next-line n/prefer-global/buffer
-const arrayBufferToNodeBuffer = arrayBuffer => globalThis.Buffer.from(arrayBuffer);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/string.js
-
-
-
-async function getStreamAsString(stream, options) {
-	return contents_getStreamContents(stream, stringMethods, options);
-}
-
-const initString = () => ({contents: '', textDecoder: new TextDecoder()});
-
-const useTextDecoder = (chunk, {textDecoder}) => textDecoder.decode(chunk, {stream: true});
-
-const addStringChunk = (convertedChunk, {contents}) => contents + convertedChunk;
-
-const truncateStringChunk = (convertedChunk, chunkSize) => convertedChunk.slice(0, chunkSize);
-
-const getFinalStringChunk = ({textDecoder}) => {
-	const finalChunk = textDecoder.decode();
-	return finalChunk === '' ? undefined : finalChunk;
-};
-
-const stringMethods = {
-	init: initString,
-	convertChunk: {
-		string: identity,
-		buffer: useTextDecoder,
-		arrayBuffer: useTextDecoder,
-		dataView: useTextDecoder,
-		typedArray: useTextDecoder,
-		others: throwObjectStream,
-	},
-	getSize: getLengthProp,
-	truncateChunk: truncateStringChunk,
-	addChunk: addStringChunk,
-	getFinalChunk: getFinalStringChunk,
-	finalize: getContentsProp,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/get-stream/source/index.js
-
-
-
-
-
-
-// EXTERNAL MODULE: ./node_modules/merge-stream/index.js
-var merge_stream = __nccwpck_require__(98595);
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/stream.js
-
-
-
-
-
-
-const validateInputOptions = input => {
-	if (input !== undefined) {
-		throw new TypeError('The `input` and `inputFile` options cannot be both set.');
-	}
-};
-
-const getInputSync = ({input, inputFile}) => {
-	if (typeof inputFile !== 'string') {
-		return input;
-	}
-
-	validateInputOptions(input);
-	return (0,external_node_fs_namespaceObject.readFileSync)(inputFile);
-};
-
-// `input` and `inputFile` option in sync mode
-const handleInputSync = options => {
-	const input = getInputSync(options);
-
-	if (isStream(input)) {
-		throw new TypeError('The `input` option cannot be a stream in sync mode');
-	}
-
-	return input;
-};
-
-const getInput = ({input, inputFile}) => {
-	if (typeof inputFile !== 'string') {
-		return input;
-	}
-
-	validateInputOptions(input);
-	return (0,external_node_fs_namespaceObject.createReadStream)(inputFile);
-};
-
-// `input` and `inputFile` option in async mode
-const handleInput = (spawned, options) => {
-	const input = getInput(options);
-
-	if (input === undefined) {
-		return;
-	}
-
-	if (isStream(input)) {
-		input.pipe(spawned.stdin);
-	} else {
-		spawned.stdin.end(input);
-	}
-};
-
-// `all` interleaves `stdout` and `stderr`
-const makeAllStream = (spawned, {all}) => {
-	if (!all || (!spawned.stdout && !spawned.stderr)) {
-		return;
-	}
-
-	const mixed = merge_stream();
-
-	if (spawned.stdout) {
-		mixed.add(spawned.stdout);
-	}
-
-	if (spawned.stderr) {
-		mixed.add(spawned.stderr);
-	}
-
-	return mixed;
-};
-
-// On failure, `result.stdout|stderr|all` should contain the currently buffered stream
-const getBufferedData = async (stream, streamPromise) => {
-	// When `buffer` is `false`, `streamPromise` is `undefined` and there is no buffered data to retrieve
-	if (!stream || streamPromise === undefined) {
-		return;
-	}
-
-	// Wait for the `all` stream to receive the last chunk before destroying the stream
-	await (0,external_node_timers_promises_namespaceObject.setTimeout)(0);
-
-	stream.destroy();
-
-	try {
-		return await streamPromise;
-	} catch (error) {
-		return error.bufferedData;
-	}
-};
-
-const getStreamPromise = (stream, {encoding, buffer, maxBuffer}) => {
-	if (!stream || !buffer) {
-		return;
-	}
-
-	// eslint-disable-next-line unicorn/text-encoding-identifier-case
-	if (encoding === 'utf8' || encoding === 'utf-8') {
-		return getStreamAsString(stream, {maxBuffer});
-	}
-
-	if (encoding === null || encoding === 'buffer') {
-		return getStreamAsBuffer(stream, {maxBuffer});
-	}
-
-	return applyEncoding(stream, maxBuffer, encoding);
-};
-
-const applyEncoding = async (stream, maxBuffer, encoding) => {
-	const buffer = await getStreamAsBuffer(stream, {maxBuffer});
-	return buffer.toString(encoding);
-};
-
-// Retrieve result of child process: exit code, signal, error, streams (stdout/stderr/all)
-const getSpawnedResult = async ({stdout, stderr, all}, {encoding, buffer, maxBuffer}, processDone) => {
-	const stdoutPromise = getStreamPromise(stdout, {encoding, buffer, maxBuffer});
-	const stderrPromise = getStreamPromise(stderr, {encoding, buffer, maxBuffer});
-	const allPromise = getStreamPromise(all, {encoding, buffer, maxBuffer: maxBuffer * 2});
-
-	try {
-		return await Promise.all([processDone, stdoutPromise, stderrPromise, allPromise]);
-	} catch (error) {
-		return Promise.all([
-			{error, signal: error.signal, timedOut: error.timedOut},
-			getBufferedData(stdout, stdoutPromise),
-			getBufferedData(stderr, stderrPromise),
-			getBufferedData(all, allPromise),
-		]);
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/promise.js
-// eslint-disable-next-line unicorn/prefer-top-level-await
-const nativePromisePrototype = (async () => {})().constructor.prototype;
-
-const descriptors = ['then', 'catch', 'finally'].map(property => [
-	property,
-	Reflect.getOwnPropertyDescriptor(nativePromisePrototype, property),
-]);
-
-// The return value is a mixin of `childProcess` and `Promise`
-const mergePromise = (spawned, promise) => {
-	for (const [property, descriptor] of descriptors) {
-		// Starting the main `promise` is deferred to avoid consuming streams
-		const value = typeof promise === 'function'
-			? (...args) => Reflect.apply(descriptor.value, promise(), args)
-			: descriptor.value.bind(promise);
-
-		Reflect.defineProperty(spawned, property, {...descriptor, value});
-	}
-};
-
-// Use promises instead of `child_process` events
-const getSpawnedPromise = spawned => new Promise((resolve, reject) => {
-	spawned.on('exit', (exitCode, signal) => {
-		resolve({exitCode, signal});
-	});
-
-	spawned.on('error', error => {
-		reject(error);
-	});
-
-	if (spawned.stdin) {
-		spawned.stdin.on('error', error => {
-			reject(error);
-		});
-	}
-});
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/command.js
-
-
-
-const normalizeArgs = (file, args = []) => {
-	if (!Array.isArray(args)) {
-		return [file];
-	}
-
-	return [file, ...args];
-};
-
-const NO_ESCAPE_REGEXP = /^[\w.-]+$/;
-
-const escapeArg = arg => {
-	if (typeof arg !== 'string' || NO_ESCAPE_REGEXP.test(arg)) {
-		return arg;
-	}
-
-	return `"${arg.replaceAll('"', '\\"')}"`;
-};
-
-const joinCommand = (file, args) => normalizeArgs(file, args).join(' ');
-
-const getEscapedCommand = (file, args) => normalizeArgs(file, args).map(arg => escapeArg(arg)).join(' ');
-
-const SPACES_REGEXP = / +/g;
-
-// Handle `execaCommand()`
-const command_parseCommand = command => {
-	const tokens = [];
-	for (const token of command.trim().split(SPACES_REGEXP)) {
-		// Allow spaces to be escaped by a backslash if not meant as a delimiter
-		const previousToken = tokens.at(-1);
-		if (previousToken && previousToken.endsWith('\\')) {
-			// Merge previous token with current one
-			tokens[tokens.length - 1] = `${previousToken.slice(0, -1)} ${token}`;
-		} else {
-			tokens.push(token);
-		}
-	}
-
-	return tokens;
-};
-
-const parseExpression = expression => {
-	const typeOfExpression = typeof expression;
-
-	if (typeOfExpression === 'string') {
-		return expression;
-	}
-
-	if (typeOfExpression === 'number') {
-		return String(expression);
-	}
-
-	if (
-		typeOfExpression === 'object'
-		&& expression !== null
-		&& !(expression instanceof external_node_child_process_namespaceObject.ChildProcess)
-		&& 'stdout' in expression
-	) {
-		const typeOfStdout = typeof expression.stdout;
-
-		if (typeOfStdout === 'string') {
-			return expression.stdout;
-		}
-
-		if (external_node_buffer_.Buffer.isBuffer(expression.stdout)) {
-			return expression.stdout.toString();
-		}
-
-		throw new TypeError(`Unexpected "${typeOfStdout}" stdout in template expression`);
-	}
-
-	throw new TypeError(`Unexpected "${typeOfExpression}" in template expression`);
-};
-
-const concatTokens = (tokens, nextTokens, isNew) => isNew || tokens.length === 0 || nextTokens.length === 0
-	? [...tokens, ...nextTokens]
-	: [
-		...tokens.slice(0, -1),
-		`${tokens.at(-1)}${nextTokens[0]}`,
-		...nextTokens.slice(1),
-	];
-
-const parseTemplate = ({templates, expressions, tokens, index, template}) => {
-	const templateString = template ?? templates.raw[index];
-	const templateTokens = templateString.split(SPACES_REGEXP).filter(Boolean);
-	const newTokens = concatTokens(
-		tokens,
-		templateTokens,
-		templateString.startsWith(' '),
-	);
-
-	if (index === expressions.length) {
-		return newTokens;
-	}
-
-	const expression = expressions[index];
-	const expressionTokens = Array.isArray(expression)
-		? expression.map(expression => parseExpression(expression))
-		: [parseExpression(expression)];
-	return concatTokens(
-		newTokens,
-		expressionTokens,
-		templateString.endsWith(' '),
-	);
-};
-
-const parseTemplates = (templates, expressions) => {
-	let tokens = [];
-
-	for (const [index, template] of templates.entries()) {
-		tokens = parseTemplate({templates, expressions, tokens, index, template});
-	}
-
-	return tokens;
-};
-
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/lib/verbose.js
-
-
-
-const verboseDefault = (0,external_node_util_.debuglog)('execa').enabled;
-
-const padField = (field, padding) => String(field).padStart(padding, '0');
-
-const getTimestamp = () => {
-	const date = new Date();
-	return `${padField(date.getHours(), 2)}:${padField(date.getMinutes(), 2)}:${padField(date.getSeconds(), 2)}.${padField(date.getMilliseconds(), 3)}`;
-};
-
-const logCommand = (escapedCommand, {verbose}) => {
-	if (!verbose) {
-		return;
-	}
-
-	external_node_process_namespaceObject.stderr.write(`[${getTimestamp()}] ${escapedCommand}\n`);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/node_modules/execa/index.js
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const DEFAULT_MAX_BUFFER = 1000 * 1000 * 100;
-
-const getEnv = ({env: envOption, extendEnv, preferLocal, localDir, execPath}) => {
-	const env = extendEnv ? {...external_node_process_namespaceObject.env, ...envOption} : envOption;
-
-	if (preferLocal) {
-		return npmRunPathEnv({env, cwd: localDir, execPath});
-	}
-
-	return env;
-};
-
-const handleArguments = (file, args, options = {}) => {
-	const parsed = cross_spawn._parse(file, args, options);
-	file = parsed.command;
-	args = parsed.args;
-	options = parsed.options;
-
-	options = {
-		maxBuffer: DEFAULT_MAX_BUFFER,
-		buffer: true,
-		stripFinalNewline: true,
-		extendEnv: true,
-		preferLocal: false,
-		localDir: options.cwd || external_node_process_namespaceObject.cwd(),
-		execPath: external_node_process_namespaceObject.execPath,
-		encoding: 'utf8',
-		reject: true,
-		cleanup: true,
-		all: false,
-		windowsHide: true,
-		verbose: verboseDefault,
-		...options,
-	};
-
-	options.env = getEnv(options);
-
-	options.stdio = normalizeStdio(options);
-
-	if (external_node_process_namespaceObject.platform === 'win32' && external_node_path_namespaceObject.basename(file, '.exe') === 'cmd') {
-		// #116
-		args.unshift('/q');
-	}
-
-	return {file, args, options, parsed};
-};
-
-const handleOutput = (options, value, error) => {
-	if (typeof value !== 'string' && !external_node_buffer_.Buffer.isBuffer(value)) {
-		// When `execaSync()` errors, we normalize it to '' to mimic `execa()`
-		return error === undefined ? undefined : '';
-	}
-
-	if (options.stripFinalNewline) {
-		return stripFinalNewline(value);
-	}
-
-	return value;
-};
-
-function execa(file, args, options) {
-	const parsed = handleArguments(file, args, options);
-	const command = joinCommand(file, args);
-	const escapedCommand = getEscapedCommand(file, args);
-	logCommand(escapedCommand, parsed.options);
-
-	validateTimeout(parsed.options);
-
-	let spawned;
-	try {
-		spawned = external_node_child_process_namespaceObject.spawn(parsed.file, parsed.args, parsed.options);
-	} catch (error) {
-		// Ensure the returned error is always both a promise and a child process
-		const dummySpawned = new external_node_child_process_namespaceObject.ChildProcess();
-		const errorPromise = Promise.reject(makeError({
-			error,
-			stdout: '',
-			stderr: '',
-			all: '',
-			command,
-			escapedCommand,
-			parsed,
-			timedOut: false,
-			isCanceled: false,
-			killed: false,
-		}));
-		mergePromise(dummySpawned, errorPromise);
-		return dummySpawned;
-	}
-
-	const spawnedPromise = getSpawnedPromise(spawned);
-	const timedPromise = setupTimeout(spawned, parsed.options, spawnedPromise);
-	const processDone = setExitHandler(spawned, parsed.options, timedPromise);
-
-	const context = {isCanceled: false};
-
-	spawned.kill = spawnedKill.bind(null, spawned.kill.bind(spawned));
-	spawned.cancel = spawnedCancel.bind(null, spawned, context);
-
-	const handlePromise = async () => {
-		const [{error, exitCode, signal, timedOut}, stdoutResult, stderrResult, allResult] = await getSpawnedResult(spawned, parsed.options, processDone);
-		const stdout = handleOutput(parsed.options, stdoutResult);
-		const stderr = handleOutput(parsed.options, stderrResult);
-		const all = handleOutput(parsed.options, allResult);
-
-		if (error || exitCode !== 0 || signal !== null) {
-			const returnedError = makeError({
-				error,
-				exitCode,
-				signal,
-				stdout,
-				stderr,
-				all,
-				command,
-				escapedCommand,
-				parsed,
-				timedOut,
-				isCanceled: context.isCanceled || (parsed.options.signal ? parsed.options.signal.aborted : false),
-				killed: spawned.killed,
-			});
-
-			if (!parsed.options.reject) {
-				return returnedError;
-			}
-
-			throw returnedError;
-		}
-
-		return {
-			command,
-			escapedCommand,
-			exitCode: 0,
-			stdout,
-			stderr,
-			all,
-			failed: false,
-			timedOut: false,
-			isCanceled: false,
-			killed: false,
-		};
-	};
-
-	const handlePromiseOnce = node_modules_onetime(handlePromise);
-
-	handleInput(spawned, parsed.options);
-
-	spawned.all = makeAllStream(spawned, parsed.options);
-
-	addPipeMethods(spawned);
-	mergePromise(spawned, handlePromiseOnce);
-	return spawned;
-}
-
-function execaSync(file, args, options) {
-	const parsed = handleArguments(file, args, options);
-	const command = joinCommand(file, args);
-	const escapedCommand = getEscapedCommand(file, args);
-	logCommand(escapedCommand, parsed.options);
-
-	const input = handleInputSync(parsed.options);
-
-	let result;
-	try {
-		result = external_node_child_process_namespaceObject.spawnSync(parsed.file, parsed.args, {...parsed.options, input});
-	} catch (error) {
-		throw makeError({
-			error,
-			stdout: '',
-			stderr: '',
-			all: '',
-			command,
-			escapedCommand,
-			parsed,
-			timedOut: false,
-			isCanceled: false,
-			killed: false,
-		});
-	}
-
-	const stdout = handleOutput(parsed.options, result.stdout, result.error);
-	const stderr = handleOutput(parsed.options, result.stderr, result.error);
-
-	if (result.error || result.status !== 0 || result.signal !== null) {
-		const error = makeError({
-			stdout,
-			stderr,
-			error: result.error,
-			signal: result.signal,
-			exitCode: result.status,
-			command,
-			escapedCommand,
-			parsed,
-			timedOut: result.error && result.error.code === 'ETIMEDOUT',
-			isCanceled: false,
-			killed: result.signal !== null,
-		});
-
-		if (!parsed.options.reject) {
-			return error;
-		}
-
-		throw error;
-	}
-
-	return {
-		command,
-		escapedCommand,
-		exitCode: 0,
-		stdout,
-		stderr,
-		failed: false,
-		timedOut: false,
-		isCanceled: false,
-		killed: false,
-	};
-}
-
-const normalizeScriptStdin = ({input, inputFile, stdio}) => input === undefined && inputFile === undefined && stdio === undefined
-	? {stdin: 'inherit'}
-	: {};
-
-const normalizeScriptOptions = (options = {}) => ({
-	preferLocal: true,
-	...normalizeScriptStdin(options),
-	...options,
-});
-
-function create$(options) {
-	function $(templatesOrOptions, ...expressions) {
-		if (!Array.isArray(templatesOrOptions)) {
-			return create$({...options, ...templatesOrOptions});
-		}
-
-		const [file, ...args] = parseTemplates(templatesOrOptions, expressions);
-		return execa(file, args, normalizeScriptOptions(options));
-	}
-
-	$.sync = (templates, ...expressions) => {
-		if (!Array.isArray(templates)) {
-			throw new TypeError('Please use $(options).sync`command` instead of $.sync(options)`command`.');
-		}
-
-		const [file, ...args] = parseTemplates(templates, expressions);
-		return execaSync(file, args, normalizeScriptOptions(options));
-	};
-
-	return $;
-}
-
-const $ = create$();
-
-function execaCommand(command, options) {
-	const [file, ...args] = parseCommand(command);
-	return execa(file, args, options);
-}
-
-function execaCommandSync(command, options) {
-	const [file, ...args] = parseCommand(command);
-	return execaSync(file, args, options);
-}
-
-function execaNode(scriptPath, args, options = {}) {
-	if (args && !Array.isArray(args) && typeof args === 'object') {
-		options = args;
-		args = [];
-	}
-
-	const stdio = normalizeStdioNode(options);
-	const defaultExecArgv = process.execArgv.filter(arg => !arg.startsWith('--inspect'));
-
-	const {
-		nodePath = process.execPath,
-		nodeOptions = defaultExecArgv,
-	} = options;
-
-	return execa(
-		nodePath,
-		[
-			...nodeOptions,
-			scriptPath,
-			...(Array.isArray(args) ? args : []),
-		],
-		{
-			...options,
-			stdin: undefined,
-			stdout: undefined,
-			stderr: undefined,
-			stdio,
-			shell: false,
-		},
-	);
-}
-
-;// CONCATENATED MODULE: ./node_modules/is-png/index.js
-function is_png_isPng(buffer) {
-	if (!buffer || buffer.length < 8) {
-		return false;
-	}
-
-	return buffer[0] === 0x89
-		&& buffer[1] === 0x50
-		&& buffer[2] === 0x4E
-		&& buffer[3] === 0x47
-		&& buffer[4] === 0x0D
-		&& buffer[5] === 0x0A
-		&& buffer[6] === 0x1A
-		&& buffer[7] === 0x0A;
-}
-
-// EXTERNAL MODULE: ./node_modules/bin-wrapper/index.js
-var bin_wrapper = __nccwpck_require__(27791);
-;// CONCATENATED MODULE: ./node_modules/pngquant-bin/lib/index.js
-
-
-
-
-
-const package_ = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package1.json"));
-const url = `https://raw.githubusercontent.com/imagemin/pngquant-bin/v${package_.version}/vendor/`;
-
-const binaryWrapper = new bin_wrapper()
-	.src(`${url}macos/pngquant`, 'darwin')
-	.src(`${url}linux/x86/pngquant`, 'linux', 'x86')
-	.src(`${url}linux/x64/pngquant`, 'linux', 'x64')
-	.src(`${url}freebsd/x64/pngquant`, 'freebsd', 'x64')
-	.src(`${url}win/pngquant.exe`, 'win32')
-	.dest((0,external_node_url_.fileURLToPath)(__nccwpck_require__.ab + "vendor1"))
-	.use(external_node_process_namespaceObject.platform === 'win32' ? 'pngquant.exe' : 'pngquant');
-
-/* harmony default export */ const lib = (binaryWrapper);
-
-;// CONCATENATED MODULE: ./node_modules/pngquant-bin/index.js
-
-
-/* harmony default export */ const pngquant_bin = (lib.path());
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-pngquant/index.js
-
-
-
-
-
-
-
-function imageminPngquant(options = {}) {
-	if (isBrowser) {
-		throw new Error('This package does not work in the browser.');
-	}
-
-	return async input => {
-		const isData = isUint8Array(input);
-
-		if (!isUint8Array(input)) {
-			throw new TypeError(`Expected a Uint8Array, got ${typeof input}`);
-		}
-
-		if (isData && !is_png_isPng(input)) {
-			return input;
-		}
-
-		const arguments_ = ['-'];
-
-		if (options.speed !== undefined) {
-			ow_dist(options.speed, ow_dist.number.integer.inRange(1, 11));
-			arguments_.push('--speed', options.speed.toString());
-		}
-
-		if (options.strip !== undefined) {
-			ow_dist(options.strip, ow_dist.boolean);
-
-			if (options.strip) {
-				arguments_.push('--strip');
-			}
-		}
-
-		if (options.quality !== undefined) {
-			ow_dist(options.quality, ow_dist.array.length(2).ofType(ow_dist.number.inRange(0, 1)));
-			const [min, max] = options.quality;
-			arguments_.push('--quality', `${Math.round(min * 100)}-${Math.round(max * 100)}`);
-		}
-
-		if (options.dithering !== undefined) {
-			ow_dist(options.dithering, ow_dist.any(ow_dist.number.inRange(0, 1), ow_dist.boolean.false));
-
-			if (typeof options.dithering === 'number') {
-				arguments_.push(`--floyd=${options.dithering}`);
-			} else if (options.dithering === false) {
-				arguments_.push('--ordered');
-			}
-		}
-
-		if (options.posterize !== undefined) {
-			ow_dist(options.posterize, ow_dist.number);
-			arguments_.push('--posterize', options.posterize.toString());
-		}
-
-		try {
-			const {stdout} = await execa(pngquant_bin, arguments_, {
-				encoding: 'buffer',
-				maxBuffer: Number.POSITIVE_INFINITY,
-				input,
-			});
-
-			return stdout;
-		} catch (error) {
-			// Handling special condition from pngquant binary (status code 99).
-			if (error.exitCode === 99) {
-				return input;
-			}
-
-			throw error;
-		}
-	};
-}
-
-// EXTERNAL MODULE: external "node:crypto"
-var external_node_crypto_ = __nccwpck_require__(77598);
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/is-plain-obj/index.js
-function is_plain_obj_isPlainObject(value) {
-	if (typeof value !== 'object' || value === null) {
-		return false;
-	}
-
-	const prototype = Object.getPrototypeOf(value);
-	return (prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null) && !(Symbol.toStringTag in value) && !(Symbol.iterator in value);
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/file-url.js
-
-
-// Allow some arguments/options to be either a file path string or a file URL
-const safeNormalizeFileUrl = (file, name) => {
-	const fileString = normalizeFileUrl(normalizeDenoExecPath(file));
-
-	if (typeof fileString !== 'string') {
-		throw new TypeError(`${name} must be a string or a file URL: ${fileString}.`);
-	}
-
-	return fileString;
-};
-
-// In Deno node:process execPath is a special object, not just a string:
-// https://github.com/denoland/deno/blob/f460188e583f00144000aa0d8ade08218d47c3c1/ext/node/polyfills/process.ts#L344
-const normalizeDenoExecPath = file => isDenoExecPath(file)
-	? file.toString()
-	: file;
-
-const isDenoExecPath = file => typeof file !== 'string'
-	&& file
-	&& Object.getPrototypeOf(file) === String.prototype;
-
-// Same but also allows other values, e.g. `boolean` for the `shell` option
-const normalizeFileUrl = file => file instanceof URL ? (0,external_node_url_.fileURLToPath)(file) : file;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/parameters.js
-
-
-
-// The command `arguments` and `options` are both optional.
-// This also does basic validation on them and on the command file.
-const normalizeParameters = (rawFile, rawArguments = [], rawOptions = {}) => {
-	const filePath = safeNormalizeFileUrl(rawFile, 'First argument');
-	const [commandArguments, options] = is_plain_obj_isPlainObject(rawArguments)
-		? [[], rawArguments]
-		: [rawArguments, rawOptions];
-
-	if (!Array.isArray(commandArguments)) {
-		throw new TypeError(`Second argument must be either an array of arguments or an options object: ${commandArguments}`);
-	}
-
-	if (commandArguments.some(commandArgument => typeof commandArgument === 'object' && commandArgument !== null)) {
-		throw new TypeError(`Second argument must be an array of strings: ${commandArguments}`);
-	}
-
-	const normalizedArguments = commandArguments.map(String);
-	const nullByteArgument = normalizedArguments.find(normalizedArgument => normalizedArgument.includes('\0'));
-	if (nullByteArgument !== undefined) {
-		throw new TypeError(`Arguments cannot contain null bytes ("\\0"): ${nullByteArgument}`);
-	}
-
-	if (!is_plain_obj_isPlainObject(options)) {
-		throw new TypeError(`Last argument must be an options object: ${options}`);
-	}
-
-	return [filePath, normalizedArguments, options];
-};
-
-;// CONCATENATED MODULE: external "node:string_decoder"
-const external_node_string_decoder_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:string_decoder");
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/utils/uint-array.js
-
-
-const {toString: uint_array_objectToString} = Object.prototype;
-
-const uint_array_isArrayBuffer = value => uint_array_objectToString.call(value) === '[object ArrayBuffer]';
-
-// Is either Uint8Array or Buffer
-const uint_array_isUint8Array = value => uint_array_objectToString.call(value) === '[object Uint8Array]';
-
-const bufferToUint8Array = buffer => new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-
-const uint_array_textEncoder = new TextEncoder();
-const uint_array_stringToUint8Array = string => uint_array_textEncoder.encode(string);
-
-const textDecoder = new TextDecoder();
-const uint_array_uint8ArrayToString = uint8Array => textDecoder.decode(uint8Array);
-
-const joinToString = (uint8ArraysOrStrings, encoding) => {
-	const strings = uint8ArraysToStrings(uint8ArraysOrStrings, encoding);
-	return strings.join('');
-};
-
-const uint8ArraysToStrings = (uint8ArraysOrStrings, encoding) => {
-	if (encoding === 'utf8' && uint8ArraysOrStrings.every(uint8ArrayOrString => typeof uint8ArrayOrString === 'string')) {
-		return uint8ArraysOrStrings;
-	}
-
-	const decoder = new external_node_string_decoder_namespaceObject.StringDecoder(encoding);
-	const strings = uint8ArraysOrStrings
-		.map(uint8ArrayOrString => typeof uint8ArrayOrString === 'string'
-			? uint_array_stringToUint8Array(uint8ArrayOrString)
-			: uint8ArrayOrString)
-		.map(uint8Array => decoder.write(uint8Array));
-	const finalString = decoder.end();
-	return finalString === '' ? strings : [...strings, finalString];
-};
-
-const joinToUint8Array = uint8ArraysOrStrings => {
-	if (uint8ArraysOrStrings.length === 1 && uint_array_isUint8Array(uint8ArraysOrStrings[0])) {
-		return uint8ArraysOrStrings[0];
-	}
-
-	return uint_array_concatUint8Arrays(stringsToUint8Arrays(uint8ArraysOrStrings));
-};
-
-const stringsToUint8Arrays = uint8ArraysOrStrings => uint8ArraysOrStrings.map(uint8ArrayOrString => typeof uint8ArrayOrString === 'string'
-	? uint_array_stringToUint8Array(uint8ArrayOrString)
-	: uint8ArrayOrString);
-
-const uint_array_concatUint8Arrays = uint8Arrays => {
-	const result = new Uint8Array(getJoinLength(uint8Arrays));
-
-	let index = 0;
-	for (const uint8Array of uint8Arrays) {
-		result.set(uint8Array, index);
-		index += uint8Array.length;
-	}
-
-	return result;
-};
-
-const getJoinLength = uint8Arrays => {
-	let joinLength = 0;
-	for (const uint8Array of uint8Arrays) {
-		joinLength += uint8Array.length;
-	}
-
-	return joinLength;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/template.js
-
-
-
-
-// Check whether the template string syntax is being used
-const isTemplateString = templates => Array.isArray(templates) && Array.isArray(templates.raw);
-
-// Convert execa`file ...commandArguments` to execa(file, commandArguments)
-const template_parseTemplates = (templates, expressions) => {
-	let tokens = [];
-
-	for (const [index, template] of templates.entries()) {
-		tokens = template_parseTemplate({
-			templates,
-			expressions,
-			tokens,
-			index,
-			template,
-		});
-	}
-
-	if (tokens.length === 0) {
-		throw new TypeError('Template script must not be empty');
-	}
-
-	const [file, ...commandArguments] = tokens;
-	return [file, commandArguments, {}];
-};
-
-const template_parseTemplate = ({templates, expressions, tokens, index, template}) => {
-	if (template === undefined) {
-		throw new TypeError(`Invalid backslash sequence: ${templates.raw[index]}`);
-	}
-
-	const {nextTokens, leadingWhitespaces, trailingWhitespaces} = splitByWhitespaces(template, templates.raw[index]);
-	const newTokens = template_concatTokens(tokens, nextTokens, leadingWhitespaces);
-
-	if (index === expressions.length) {
-		return newTokens;
-	}
-
-	const expression = expressions[index];
-	const expressionTokens = Array.isArray(expression)
-		? expression.map(expression => template_parseExpression(expression))
-		: [template_parseExpression(expression)];
-	return template_concatTokens(newTokens, expressionTokens, trailingWhitespaces);
-};
-
-// Like `string.split(/[ \t\r\n]+/)` except newlines and tabs are:
-//  - ignored when input as a backslash sequence like: `echo foo\n bar`
-//  - not ignored when input directly
-// The only way to distinguish those in JavaScript is to use a tagged template and compare:
-//  - the first array argument, which does not escape backslash sequences
-//  - its `raw` property, which escapes them
-const splitByWhitespaces = (template, rawTemplate) => {
-	if (rawTemplate.length === 0) {
-		return {nextTokens: [], leadingWhitespaces: false, trailingWhitespaces: false};
-	}
-
-	const nextTokens = [];
-	let templateStart = 0;
-	const leadingWhitespaces = DELIMITERS.has(rawTemplate[0]);
-
-	for (
-		let templateIndex = 0, rawIndex = 0;
-		templateIndex < template.length;
-		templateIndex += 1, rawIndex += 1
-	) {
-		const rawCharacter = rawTemplate[rawIndex];
-		if (DELIMITERS.has(rawCharacter)) {
-			if (templateStart !== templateIndex) {
-				nextTokens.push(template.slice(templateStart, templateIndex));
-			}
-
-			templateStart = templateIndex + 1;
-		} else if (rawCharacter === '\\') {
-			const nextRawCharacter = rawTemplate[rawIndex + 1];
-			if (nextRawCharacter === '\n') {
-				// Handles escaped newlines in templates
-				templateIndex -= 1;
-				rawIndex += 1;
-			} else if (nextRawCharacter === 'u' && rawTemplate[rawIndex + 2] === '{') {
-				rawIndex = rawTemplate.indexOf('}', rawIndex + 3);
-			} else {
-				rawIndex += ESCAPE_LENGTH[nextRawCharacter] ?? 1;
-			}
-		}
-	}
-
-	const trailingWhitespaces = templateStart === template.length;
-	if (!trailingWhitespaces) {
-		nextTokens.push(template.slice(templateStart));
-	}
-
-	return {nextTokens, leadingWhitespaces, trailingWhitespaces};
-};
-
-const DELIMITERS = new Set([' ', '\t', '\r', '\n']);
-
-// Number of characters in backslash escape sequences: \0 \xXX or \uXXXX
-// \cX is allowed in RegExps but not in strings
-// Octal sequences are not allowed in strict mode
-const ESCAPE_LENGTH = {x: 3, u: 5};
-
-const template_concatTokens = (tokens, nextTokens, isSeparated) => isSeparated
-	|| tokens.length === 0
-	|| nextTokens.length === 0
-	? [...tokens, ...nextTokens]
-	: [
-		...tokens.slice(0, -1),
-		`${tokens.at(-1)}${nextTokens[0]}`,
-		...nextTokens.slice(1),
-	];
-
-// Handle `${expression}` inside the template string syntax
-const template_parseExpression = expression => {
-	const typeOfExpression = typeof expression;
-
-	if (typeOfExpression === 'string') {
-		return expression;
-	}
-
-	if (typeOfExpression === 'number') {
-		return String(expression);
-	}
-
-	if (is_plain_obj_isPlainObject(expression) && ('stdout' in expression || 'isMaxBuffer' in expression)) {
-		return getSubprocessResult(expression);
-	}
-
-	if (expression instanceof external_node_child_process_namespaceObject.ChildProcess || Object.prototype.toString.call(expression) === '[object Promise]') {
-		// eslint-disable-next-line no-template-curly-in-string
-		throw new TypeError('Unexpected subprocess in template expression. Please use ${await subprocess} instead of ${subprocess}.');
-	}
-
-	throw new TypeError(`Unexpected "${typeOfExpression}" in template expression`);
-};
-
-const getSubprocessResult = ({stdout}) => {
-	if (typeof stdout === 'string') {
-		return stdout;
-	}
-
-	if (uint_array_isUint8Array(stdout)) {
-		return uint_array_uint8ArrayToString(stdout);
-	}
-
-	if (stdout === undefined) {
-		throw new TypeError('Missing result.stdout in template expression. This is probably due to the previous subprocess\' "stdout" option.');
-	}
-
-	throw new TypeError(`Unexpected "${typeof stdout}" stdout in template expression`);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/utils/standard-stream.js
-
-
-const isStandardStream = stream => STANDARD_STREAMS.includes(stream);
-const STANDARD_STREAMS = [external_node_process_namespaceObject.stdin, external_node_process_namespaceObject.stdout, external_node_process_namespaceObject.stderr];
-const STANDARD_STREAMS_ALIASES = ['stdin', 'stdout', 'stderr'];
-const getStreamName = fdNumber => STANDARD_STREAMS_ALIASES[fdNumber] ?? `stdio[${fdNumber}]`;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/specific.js
-
-
-
-
-// Some options can have different values for `stdout`/`stderr`/`fd3`.
-// This normalizes those to array of values.
-// For example, `{verbose: {stdout: 'none', stderr: 'full'}}` becomes `{verbose: ['none', 'none', 'full']}`
-const normalizeFdSpecificOptions = options => {
-	const optionsCopy = {...options};
-
-	for (const optionName of FD_SPECIFIC_OPTIONS) {
-		optionsCopy[optionName] = normalizeFdSpecificOption(options, optionName);
-	}
-
-	return optionsCopy;
-};
-
-const normalizeFdSpecificOption = (options, optionName) => {
-	const optionBaseArray = Array.from({length: getStdioLength(options) + 1});
-	const optionArray = normalizeFdSpecificValue(options[optionName], optionBaseArray, optionName);
-	return addDefaultValue(optionArray, optionName);
-};
-
-const getStdioLength = ({stdio}) => Array.isArray(stdio)
-	? Math.max(stdio.length, STANDARD_STREAMS_ALIASES.length)
-	: STANDARD_STREAMS_ALIASES.length;
-
-const normalizeFdSpecificValue = (optionValue, optionArray, optionName) => is_plain_obj_isPlainObject(optionValue)
-	? normalizeOptionObject(optionValue, optionArray, optionName)
-	: optionArray.fill(optionValue);
-
-const normalizeOptionObject = (optionValue, optionArray, optionName) => {
-	for (const fdName of Object.keys(optionValue).sort(compareFdName)) {
-		for (const fdNumber of parseFdName(fdName, optionName, optionArray)) {
-			optionArray[fdNumber] = optionValue[fdName];
-		}
-	}
-
-	return optionArray;
-};
-
-// Ensure priority order when setting both `stdout`/`stderr`, `fd1`/`fd2`, and `all`
-const compareFdName = (fdNameA, fdNameB) => getFdNameOrder(fdNameA) < getFdNameOrder(fdNameB) ? 1 : -1;
-
-const getFdNameOrder = fdName => {
-	if (fdName === 'stdout' || fdName === 'stderr') {
-		return 0;
-	}
-
-	return fdName === 'all' ? 2 : 1;
-};
-
-const parseFdName = (fdName, optionName, optionArray) => {
-	if (fdName === 'ipc') {
-		return [optionArray.length - 1];
-	}
-
-	const fdNumber = parseFd(fdName);
-	if (fdNumber === undefined || fdNumber === 0) {
-		throw new TypeError(`"${optionName}.${fdName}" is invalid.
-It must be "${optionName}.stdout", "${optionName}.stderr", "${optionName}.all", "${optionName}.ipc", or "${optionName}.fd3", "${optionName}.fd4" (and so on).`);
-	}
-
-	if (fdNumber >= optionArray.length) {
-		throw new TypeError(`"${optionName}.${fdName}" is invalid: that file descriptor does not exist.
-Please set the "stdio" option to ensure that file descriptor exists.`);
-	}
-
-	return fdNumber === 'all' ? [1, 2] : [fdNumber];
-};
-
-// Use the same syntax for fd-specific options and the `from`/`to` options
-const parseFd = fdName => {
-	if (fdName === 'all') {
-		return fdName;
-	}
-
-	if (STANDARD_STREAMS_ALIASES.includes(fdName)) {
-		return STANDARD_STREAMS_ALIASES.indexOf(fdName);
-	}
-
-	const regexpResult = FD_REGEXP.exec(fdName);
-	if (regexpResult !== null) {
-		return Number(regexpResult[1]);
-	}
-};
-
-const FD_REGEXP = /^fd(\d+)$/;
-
-const addDefaultValue = (optionArray, optionName) => optionArray.map(optionValue => optionValue === undefined
-	? DEFAULT_OPTIONS[optionName]
-	: optionValue);
-
-// Default value for the `verbose` option
-const specific_verboseDefault = (0,external_node_util_.debuglog)('execa').enabled ? 'full' : 'none';
-
-const DEFAULT_OPTIONS = {
-	lines: false,
-	buffer: true,
-	maxBuffer: 1000 * 1000 * 100,
-	verbose: specific_verboseDefault,
-	stripFinalNewline: true,
-};
-
-// List of options which can have different values for `stdout`/`stderr`
-const FD_SPECIFIC_OPTIONS = ['lines', 'buffer', 'maxBuffer', 'verbose', 'stripFinalNewline'];
-
-// Retrieve fd-specific option
-const getFdSpecificValue = (optionArray, fdNumber) => fdNumber === 'ipc'
-	? optionArray.at(-1)
-	: optionArray[fdNumber];
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/values.js
-
-
-// The `verbose` option can have different values for `stdout`/`stderr`
-const isVerbose = ({verbose}, fdNumber) => getFdVerbose(verbose, fdNumber) !== 'none';
-
-// Whether IPC and output and logged
-const isFullVerbose = ({verbose}, fdNumber) => !['none', 'short'].includes(getFdVerbose(verbose, fdNumber));
-
-// The `verbose` option can be a function to customize logging
-const getVerboseFunction = ({verbose}, fdNumber) => {
-	const fdVerbose = getFdVerbose(verbose, fdNumber);
-	return isVerboseFunction(fdVerbose) ? fdVerbose : undefined;
-};
-
-// When using `verbose: {stdout, stderr, fd3, ipc}`:
-//  - `verbose.stdout|stderr|fd3` is used for 'output'
-//  - `verbose.ipc` is only used for 'ipc'
-//  - highest `verbose.*` value is used for 'command', 'error' and 'duration'
-const getFdVerbose = (verbose, fdNumber) => fdNumber === undefined
-	? getFdGenericVerbose(verbose)
-	: getFdSpecificValue(verbose, fdNumber);
-
-// When using `verbose: {stdout, stderr, fd3, ipc}` and logging is not specific to a file descriptor.
-// We then use the highest `verbose.*` value, using the following order:
-//  - function > 'full' > 'short' > 'none'
-//  - if several functions are defined: stdout > stderr > fd3 > ipc
-const getFdGenericVerbose = verbose => verbose.find(fdVerbose => isVerboseFunction(fdVerbose))
-	?? VERBOSE_VALUES.findLast(fdVerbose => verbose.includes(fdVerbose));
-
-// Whether the `verbose` option is customized using a function
-const isVerboseFunction = fdVerbose => typeof fdVerbose === 'function';
-
-const VERBOSE_VALUES = ['none', 'short', 'full'];
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/escape.js
-
-
-
-// Compute `result.command` and `result.escapedCommand`
-const escape_joinCommand = (filePath, rawArguments) => {
-	const fileAndArguments = [filePath, ...rawArguments];
-	const command = fileAndArguments.join(' ');
-	const escapedCommand = fileAndArguments
-		.map(fileAndArgument => quoteString(escapeControlCharacters(fileAndArgument)))
-		.join(' ');
-	return {command, escapedCommand};
-};
-
-// Remove ANSI sequences and escape control characters and newlines
-const escapeLines = lines => (0,external_node_util_.stripVTControlCharacters)(lines)
-	.split('\n')
-	.map(line => escapeControlCharacters(line))
-	.join('\n');
-
-const escapeControlCharacters = line => line.replaceAll(SPECIAL_CHAR_REGEXP, character => escapeControlCharacter(character));
-
-const escapeControlCharacter = character => {
-	const commonEscape = COMMON_ESCAPES[character];
-	if (commonEscape !== undefined) {
-		return commonEscape;
-	}
-
-	const codepoint = character.codePointAt(0);
-	const codepointHex = codepoint.toString(16);
-	return codepoint <= ASTRAL_START
-		? `\\u${codepointHex.padStart(4, '0')}`
-		: `\\U${codepointHex}`;
-};
-
-// Characters that would create issues when printed are escaped using the \u or \U notation.
-// Those include control characters and newlines.
-// The \u and \U notation is Bash specific, but there is no way to do this in a shell-agnostic way.
-// Some shells do not even have a way to print those characters in an escaped fashion.
-// Therefore, we prioritize printing those safely, instead of allowing those to be copy-pasted.
-// List of Unicode character categories: https://www.fileformat.info/info/unicode/category/index.htm
-const getSpecialCharRegExp = () => {
-	try {
-		// This throws when using Node.js without ICU support.
-		// When using a RegExp literal, this would throw at parsing-time, instead of runtime.
-		// eslint-disable-next-line prefer-regex-literals
-		return new RegExp('\\p{Separator}|\\p{Other}', 'gu');
-	} catch {
-		// Similar to the above RegExp, but works even when Node.js has been built without ICU support.
-		// Unlike the above RegExp, it only covers whitespaces and C0/C1 control characters.
-		// It does not cover some edge cases, such as Unicode reserved characters.
-		// See https://github.com/sindresorhus/execa/issues/1143
-		// eslint-disable-next-line no-control-regex
-		return /[\s\u0000-\u001F\u007F-\u009F\u00AD]/g;
-	}
-};
-
-const SPECIAL_CHAR_REGEXP = getSpecialCharRegExp();
-
-// Accepted by $'...' in Bash.
-// Exclude \a \e \v which are accepted in Bash but not in JavaScript (except \v) and JSON.
-const COMMON_ESCAPES = {
-	' ': ' ',
-	'\b': '\\b',
-	'\f': '\\f',
-	'\n': '\\n',
-	'\r': '\\r',
-	'\t': '\\t',
-};
-
-// Up until that codepoint, \u notation can be used instead of \U
-const ASTRAL_START = 65_535;
-
-// Some characters are shell-specific, i.e. need to be escaped when the command is copy-pasted then run.
-// Escaping is shell-specific. We cannot know which shell is used: `process.platform` detection is not enough.
-// For example, Windows users could be using `cmd.exe`, Powershell or Bash for Windows which all use different escaping.
-// We use '...' on Unix, which is POSIX shell compliant and escape all characters but ' so this is fairly safe.
-// On Windows, we assume cmd.exe is used and escape with "...", which also works with Powershell.
-const quoteString = escapedArgument => {
-	if (escape_NO_ESCAPE_REGEXP.test(escapedArgument)) {
-		return escapedArgument;
-	}
-
-	return external_node_process_namespaceObject.platform === 'win32'
-		? `"${escapedArgument.replaceAll('"', '""')}"`
-		: `'${escapedArgument.replaceAll('\'', '\'\\\'\'')}'`;
-};
-
-const escape_NO_ESCAPE_REGEXP = /^[\w./-]+$/;
-
-;// CONCATENATED MODULE: ./node_modules/is-unicode-supported/index.js
-
-
-function isUnicodeSupported() {
-	const {env} = external_node_process_namespaceObject;
-	const {TERM, TERM_PROGRAM} = env;
-
-	if (external_node_process_namespaceObject.platform !== 'win32') {
-		return TERM !== 'linux'; // Linux console (kernel)
-	}
-
-	return Boolean(env.WT_SESSION) // Windows Terminal
-		|| Boolean(env.TERMINUS_SUBLIME) // Terminus (<0.2.27)
-		|| env.ConEmuTask === '{cmd::Cmder}' // ConEmu and cmder
-		|| TERM_PROGRAM === 'Terminus-Sublime'
-		|| TERM_PROGRAM === 'vscode'
-		|| TERM === 'xterm-256color'
-		|| TERM === 'alacritty'
-		|| TERM === 'rxvt-unicode'
-		|| TERM === 'rxvt-unicode-256color'
-		|| env.TERMINAL_EMULATOR === 'JetBrains-JediTerm';
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/figures/index.js
-
-
-const common = {
-	circleQuestionMark: '(?)',
-	questionMarkPrefix: '(?)',
-	square: '█',
-	squareDarkShade: '▓',
-	squareMediumShade: '▒',
-	squareLightShade: '░',
-	squareTop: '▀',
-	squareBottom: '▄',
-	squareLeft: '▌',
-	squareRight: '▐',
-	squareCenter: '■',
-	bullet: '●',
-	dot: '․',
-	ellipsis: '…',
-	pointerSmall: '›',
-	triangleUp: '▲',
-	triangleUpSmall: '▴',
-	triangleDown: '▼',
-	triangleDownSmall: '▾',
-	triangleLeftSmall: '◂',
-	triangleRightSmall: '▸',
-	home: '⌂',
-	heart: '♥',
-	musicNote: '♪',
-	musicNoteBeamed: '♫',
-	arrowUp: '↑',
-	arrowDown: '↓',
-	arrowLeft: '←',
-	arrowRight: '→',
-	arrowLeftRight: '↔',
-	arrowUpDown: '↕',
-	almostEqual: '≈',
-	notEqual: '≠',
-	lessOrEqual: '≤',
-	greaterOrEqual: '≥',
-	identical: '≡',
-	infinity: '∞',
-	subscriptZero: '₀',
-	subscriptOne: '₁',
-	subscriptTwo: '₂',
-	subscriptThree: '₃',
-	subscriptFour: '₄',
-	subscriptFive: '₅',
-	subscriptSix: '₆',
-	subscriptSeven: '₇',
-	subscriptEight: '₈',
-	subscriptNine: '₉',
-	oneHalf: '½',
-	oneThird: '⅓',
-	oneQuarter: '¼',
-	oneFifth: '⅕',
-	oneSixth: '⅙',
-	oneEighth: '⅛',
-	twoThirds: '⅔',
-	twoFifths: '⅖',
-	threeQuarters: '¾',
-	threeFifths: '⅗',
-	threeEighths: '⅜',
-	fourFifths: '⅘',
-	fiveSixths: '⅚',
-	fiveEighths: '⅝',
-	sevenEighths: '⅞',
-	line: '─',
-	lineBold: '━',
-	lineDouble: '═',
-	lineDashed0: '┄',
-	lineDashed1: '┅',
-	lineDashed2: '┈',
-	lineDashed3: '┉',
-	lineDashed4: '╌',
-	lineDashed5: '╍',
-	lineDashed6: '╴',
-	lineDashed7: '╶',
-	lineDashed8: '╸',
-	lineDashed9: '╺',
-	lineDashed10: '╼',
-	lineDashed11: '╾',
-	lineDashed12: '−',
-	lineDashed13: '–',
-	lineDashed14: '‐',
-	lineDashed15: '⁃',
-	lineVertical: '│',
-	lineVerticalBold: '┃',
-	lineVerticalDouble: '║',
-	lineVerticalDashed0: '┆',
-	lineVerticalDashed1: '┇',
-	lineVerticalDashed2: '┊',
-	lineVerticalDashed3: '┋',
-	lineVerticalDashed4: '╎',
-	lineVerticalDashed5: '╏',
-	lineVerticalDashed6: '╵',
-	lineVerticalDashed7: '╷',
-	lineVerticalDashed8: '╹',
-	lineVerticalDashed9: '╻',
-	lineVerticalDashed10: '╽',
-	lineVerticalDashed11: '╿',
-	lineDownLeft: '┐',
-	lineDownLeftArc: '╮',
-	lineDownBoldLeftBold: '┓',
-	lineDownBoldLeft: '┒',
-	lineDownLeftBold: '┑',
-	lineDownDoubleLeftDouble: '╗',
-	lineDownDoubleLeft: '╖',
-	lineDownLeftDouble: '╕',
-	lineDownRight: '┌',
-	lineDownRightArc: '╭',
-	lineDownBoldRightBold: '┏',
-	lineDownBoldRight: '┎',
-	lineDownRightBold: '┍',
-	lineDownDoubleRightDouble: '╔',
-	lineDownDoubleRight: '╓',
-	lineDownRightDouble: '╒',
-	lineUpLeft: '┘',
-	lineUpLeftArc: '╯',
-	lineUpBoldLeftBold: '┛',
-	lineUpBoldLeft: '┚',
-	lineUpLeftBold: '┙',
-	lineUpDoubleLeftDouble: '╝',
-	lineUpDoubleLeft: '╜',
-	lineUpLeftDouble: '╛',
-	lineUpRight: '└',
-	lineUpRightArc: '╰',
-	lineUpBoldRightBold: '┗',
-	lineUpBoldRight: '┖',
-	lineUpRightBold: '┕',
-	lineUpDoubleRightDouble: '╚',
-	lineUpDoubleRight: '╙',
-	lineUpRightDouble: '╘',
-	lineUpDownLeft: '┤',
-	lineUpBoldDownBoldLeftBold: '┫',
-	lineUpBoldDownBoldLeft: '┨',
-	lineUpDownLeftBold: '┥',
-	lineUpBoldDownLeftBold: '┩',
-	lineUpDownBoldLeftBold: '┪',
-	lineUpDownBoldLeft: '┧',
-	lineUpBoldDownLeft: '┦',
-	lineUpDoubleDownDoubleLeftDouble: '╣',
-	lineUpDoubleDownDoubleLeft: '╢',
-	lineUpDownLeftDouble: '╡',
-	lineUpDownRight: '├',
-	lineUpBoldDownBoldRightBold: '┣',
-	lineUpBoldDownBoldRight: '┠',
-	lineUpDownRightBold: '┝',
-	lineUpBoldDownRightBold: '┡',
-	lineUpDownBoldRightBold: '┢',
-	lineUpDownBoldRight: '┟',
-	lineUpBoldDownRight: '┞',
-	lineUpDoubleDownDoubleRightDouble: '╠',
-	lineUpDoubleDownDoubleRight: '╟',
-	lineUpDownRightDouble: '╞',
-	lineDownLeftRight: '┬',
-	lineDownBoldLeftBoldRightBold: '┳',
-	lineDownLeftBoldRightBold: '┯',
-	lineDownBoldLeftRight: '┰',
-	lineDownBoldLeftBoldRight: '┱',
-	lineDownBoldLeftRightBold: '┲',
-	lineDownLeftRightBold: '┮',
-	lineDownLeftBoldRight: '┭',
-	lineDownDoubleLeftDoubleRightDouble: '╦',
-	lineDownDoubleLeftRight: '╥',
-	lineDownLeftDoubleRightDouble: '╤',
-	lineUpLeftRight: '┴',
-	lineUpBoldLeftBoldRightBold: '┻',
-	lineUpLeftBoldRightBold: '┷',
-	lineUpBoldLeftRight: '┸',
-	lineUpBoldLeftBoldRight: '┹',
-	lineUpBoldLeftRightBold: '┺',
-	lineUpLeftRightBold: '┶',
-	lineUpLeftBoldRight: '┵',
-	lineUpDoubleLeftDoubleRightDouble: '╩',
-	lineUpDoubleLeftRight: '╨',
-	lineUpLeftDoubleRightDouble: '╧',
-	lineUpDownLeftRight: '┼',
-	lineUpBoldDownBoldLeftBoldRightBold: '╋',
-	lineUpDownBoldLeftBoldRightBold: '╈',
-	lineUpBoldDownLeftBoldRightBold: '╇',
-	lineUpBoldDownBoldLeftRightBold: '╊',
-	lineUpBoldDownBoldLeftBoldRight: '╉',
-	lineUpBoldDownLeftRight: '╀',
-	lineUpDownBoldLeftRight: '╁',
-	lineUpDownLeftBoldRight: '┽',
-	lineUpDownLeftRightBold: '┾',
-	lineUpBoldDownBoldLeftRight: '╂',
-	lineUpDownLeftBoldRightBold: '┿',
-	lineUpBoldDownLeftBoldRight: '╃',
-	lineUpBoldDownLeftRightBold: '╄',
-	lineUpDownBoldLeftBoldRight: '╅',
-	lineUpDownBoldLeftRightBold: '╆',
-	lineUpDoubleDownDoubleLeftDoubleRightDouble: '╬',
-	lineUpDoubleDownDoubleLeftRight: '╫',
-	lineUpDownLeftDoubleRightDouble: '╪',
-	lineCross: '╳',
-	lineBackslash: '╲',
-	lineSlash: '╱',
-};
-
-const specialMainSymbols = {
-	tick: '✔',
-	info: 'ℹ',
-	warning: '⚠',
-	cross: '✘',
-	squareSmall: '◻',
-	squareSmallFilled: '◼',
-	circle: '◯',
-	circleFilled: '◉',
-	circleDotted: '◌',
-	circleDouble: '◎',
-	circleCircle: 'ⓞ',
-	circleCross: 'ⓧ',
-	circlePipe: 'Ⓘ',
-	radioOn: '◉',
-	radioOff: '◯',
-	checkboxOn: '☒',
-	checkboxOff: '☐',
-	checkboxCircleOn: 'ⓧ',
-	checkboxCircleOff: 'Ⓘ',
-	pointer: '❯',
-	triangleUpOutline: '△',
-	triangleLeft: '◀',
-	triangleRight: '▶',
-	lozenge: '◆',
-	lozengeOutline: '◇',
-	hamburger: '☰',
-	smiley: '㋡',
-	mustache: '෴',
-	star: '★',
-	play: '▶',
-	nodejs: '⬢',
-	oneSeventh: '⅐',
-	oneNinth: '⅑',
-	oneTenth: '⅒',
-};
-
-const specialFallbackSymbols = {
-	tick: '√',
-	info: 'i',
-	warning: '‼',
-	cross: '×',
-	squareSmall: '□',
-	squareSmallFilled: '■',
-	circle: '( )',
-	circleFilled: '(*)',
-	circleDotted: '( )',
-	circleDouble: '( )',
-	circleCircle: '(○)',
-	circleCross: '(×)',
-	circlePipe: '(│)',
-	radioOn: '(*)',
-	radioOff: '( )',
-	checkboxOn: '[×]',
-	checkboxOff: '[ ]',
-	checkboxCircleOn: '(×)',
-	checkboxCircleOff: '( )',
-	pointer: '>',
-	triangleUpOutline: '∆',
-	triangleLeft: '◄',
-	triangleRight: '►',
-	lozenge: '♦',
-	lozengeOutline: '◊',
-	hamburger: '≡',
-	smiley: '☺',
-	mustache: '┌─┐',
-	star: '✶',
-	play: '►',
-	nodejs: '♦',
-	oneSeventh: '1/7',
-	oneNinth: '1/9',
-	oneTenth: '1/10',
-};
-
-const mainSymbols = {...common, ...specialMainSymbols};
-const fallbackSymbols = {...common, ...specialFallbackSymbols};
-
-const shouldUseMain = isUnicodeSupported();
-const figures = shouldUseMain ? mainSymbols : fallbackSymbols;
-/* harmony default export */ const node_modules_figures = (figures);
-
-const replacements = Object.entries(specialMainSymbols);
-
-// On terminals which do not support Unicode symbols, substitute them to other symbols
-const replaceSymbols = (string, {useFallback = !shouldUseMain} = {}) => {
-	if (useFallback) {
-		for (const [key, mainSymbol] of replacements) {
-			string = string.replaceAll(mainSymbol, fallbackSymbols[key]);
-		}
-	}
-
-	return string;
-};
-
-;// CONCATENATED MODULE: external "node:tty"
-const external_node_tty_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:tty");
-;// CONCATENATED MODULE: ./node_modules/yoctocolors/base.js
-
-
-// eslint-disable-next-line no-warning-comments
-// TODO: Use a better method when it's added to Node.js (https://github.com/nodejs/node/pull/40240)
-// Lots of optionals here to support Deno.
-const hasColors = external_node_tty_namespaceObject?.WriteStream?.prototype?.hasColors?.() ?? false;
-
-const format = (open, close) => {
-	if (!hasColors) {
-		return input => input;
-	}
-
-	const openCode = `\u001B[${open}m`;
-	const closeCode = `\u001B[${close}m`;
-
-	return input => {
-		const string = input + ''; // eslint-disable-line no-implicit-coercion -- This is faster.
-		let index = string.indexOf(closeCode);
-
-		if (index === -1) {
-			// Note: Intentionally not using string interpolation for performance reasons.
-			return openCode + string + closeCode;
-		}
-
-		// Handle nested colors.
-
-		// We could have done this, but it's too slow (as of Node.js 22).
-		// return openCode + string.replaceAll(closeCode, openCode) + closeCode;
-
-		let result = openCode;
-		let lastIndex = 0;
-
-		while (index !== -1) {
-			result += string.slice(lastIndex, index) + openCode;
-			lastIndex = index + closeCode.length;
-			index = string.indexOf(closeCode, lastIndex);
-		}
-
-		result += string.slice(lastIndex) + closeCode;
-
-		return result;
-	};
-};
-
-const base_reset = format(0, 0);
-const bold = format(1, 22);
-const dim = format(2, 22);
-const italic = format(3, 23);
-const underline = format(4, 24);
-const overline = format(53, 55);
-const inverse = format(7, 27);
-const base_hidden = format(8, 28);
-const strikethrough = format(9, 29);
-
-const black = format(30, 39);
-const red = format(31, 39);
-const green = format(32, 39);
-const yellow = format(33, 39);
-const blue = format(34, 39);
-const magenta = format(35, 39);
-const cyan = format(36, 39);
-const white = format(37, 39);
-const gray = format(90, 39);
-
-const bgBlack = format(40, 49);
-const bgRed = format(41, 49);
-const bgGreen = format(42, 49);
-const bgYellow = format(43, 49);
-const bgBlue = format(44, 49);
-const bgMagenta = format(45, 49);
-const bgCyan = format(46, 49);
-const bgWhite = format(47, 49);
-const bgGray = format(100, 49);
-
-const redBright = format(91, 39);
-const greenBright = format(92, 39);
-const yellowBright = format(93, 39);
-const blueBright = format(94, 39);
-const magentaBright = format(95, 39);
-const cyanBright = format(96, 39);
-const whiteBright = format(97, 39);
-
-const bgRedBright = format(101, 49);
-const bgGreenBright = format(102, 49);
-const bgYellowBright = format(103, 49);
-const bgBlueBright = format(104, 49);
-const bgMagentaBright = format(105, 49);
-const bgCyanBright = format(106, 49);
-const bgWhiteBright = format(107, 49);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/default.js
-
-
-
-// Default when `verbose` is not a function
-const defaultVerboseFunction = ({
-	type,
-	message,
-	timestamp,
-	piped,
-	commandId,
-	result: {failed = false} = {},
-	options: {reject = true},
-}) => {
-	const timestampString = serializeTimestamp(timestamp);
-	const icon = ICONS[type]({failed, reject, piped});
-	const color = COLORS[type]({reject});
-	return `${gray(`[${timestampString}]`)} ${gray(`[${commandId}]`)} ${color(icon)} ${color(message)}`;
-};
-
-// Prepending the timestamp allows debugging the slow paths of a subprocess
-const serializeTimestamp = timestamp => `${default_padField(timestamp.getHours(), 2)}:${default_padField(timestamp.getMinutes(), 2)}:${default_padField(timestamp.getSeconds(), 2)}.${default_padField(timestamp.getMilliseconds(), 3)}`;
-
-const default_padField = (field, padding) => String(field).padStart(padding, '0');
-
-const getFinalIcon = ({failed, reject}) => {
-	if (!failed) {
-		return node_modules_figures.tick;
-	}
-
-	return reject ? node_modules_figures.cross : node_modules_figures.warning;
-};
-
-const ICONS = {
-	command: ({piped}) => piped ? '|' : '$',
-	output: () => ' ',
-	ipc: () => '*',
-	error: getFinalIcon,
-	duration: getFinalIcon,
-};
-
-const default_identity = string => string;
-
-const COLORS = {
-	command: () => bold,
-	output: () => default_identity,
-	ipc: () => default_identity,
-	error: ({reject}) => reject ? redBright : yellowBright,
-	duration: () => gray,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/custom.js
-
-
-// Apply the `verbose` function on each line
-const applyVerboseOnLines = (printedLines, verboseInfo, fdNumber) => {
-	const verboseFunction = getVerboseFunction(verboseInfo, fdNumber);
-	return printedLines
-		.map(({verboseLine, verboseObject}) => applyVerboseFunction(verboseLine, verboseObject, verboseFunction))
-		.filter(printedLine => printedLine !== undefined)
-		.map(printedLine => appendNewline(printedLine))
-		.join('');
-};
-
-const applyVerboseFunction = (verboseLine, verboseObject, verboseFunction) => {
-	if (verboseFunction === undefined) {
-		return verboseLine;
-	}
-
-	const printedLine = verboseFunction(verboseLine, verboseObject);
-	if (typeof printedLine === 'string') {
-		return printedLine;
-	}
-};
-
-const appendNewline = printedLine => printedLine.endsWith('\n')
-	? printedLine
-	: `${printedLine}\n`;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/log.js
-
-
-
-
-
-// This prints on stderr.
-// If the subprocess prints on stdout and is using `stdout: 'inherit'`,
-// there is a chance both writes will compete (introducing a race condition).
-// This means their respective order is not deterministic.
-// In particular, this means the verbose command lines might be after the start of the subprocess output.
-// Using synchronous I/O does not solve this problem.
-// However, this only seems to happen when the stdout/stderr target
-// (e.g. a terminal) is being written to by many subprocesses at once, which is unlikely in real scenarios.
-const verboseLog = ({type, verboseMessage, fdNumber, verboseInfo, result}) => {
-	const verboseObject = getVerboseObject({type, result, verboseInfo});
-	const printedLines = getPrintedLines(verboseMessage, verboseObject);
-	const finalLines = applyVerboseOnLines(printedLines, verboseInfo, fdNumber);
-	if (finalLines !== '') {
-		console.warn(finalLines.slice(0, -1));
-	}
-};
-
-const getVerboseObject = ({
-	type,
-	result,
-	verboseInfo: {escapedCommand, commandId, rawOptions: {piped = false, ...options}},
-}) => ({
-	type,
-	escapedCommand,
-	commandId: `${commandId}`,
-	timestamp: new Date(),
-	piped,
-	result,
-	options,
-});
-
-const getPrintedLines = (verboseMessage, verboseObject) => verboseMessage
-	.split('\n')
-	.map(message => getPrintedLine({...verboseObject, message}));
-
-const getPrintedLine = verboseObject => {
-	const verboseLine = defaultVerboseFunction(verboseObject);
-	return {verboseLine, verboseObject};
-};
-
-// Serialize any type to a line string, for logging
-const serializeVerboseMessage = message => {
-	const messageString = typeof message === 'string' ? message : (0,external_node_util_.inspect)(message);
-	const escapedMessage = escapeLines(messageString);
-	return escapedMessage.replaceAll('\t', ' '.repeat(TAB_SIZE));
-};
-
-// Same as `util.inspect()`
-const TAB_SIZE = 2;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/start.js
-
-
-
-// When `verbose` is `short|full|custom`, print each command
-const start_logCommand = (escapedCommand, verboseInfo) => {
-	if (!isVerbose(verboseInfo)) {
-		return;
-	}
-
-	verboseLog({
-		type: 'command',
-		verboseMessage: escapedCommand,
-		verboseInfo,
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/info.js
-
-
-// Information computed before spawning, used by the `verbose` option
-const getVerboseInfo = (verbose, escapedCommand, rawOptions) => {
-	validateVerbose(verbose);
-	const commandId = getCommandId(verbose);
-	return {
-		verbose,
-		escapedCommand,
-		commandId,
-		rawOptions,
-	};
-};
-
-const getCommandId = verbose => isVerbose({verbose}) ? COMMAND_ID++ : undefined;
-
-// Prepending the `pid` is useful when multiple commands print their output at the same time.
-// However, we cannot use the real PID since this is not available with `child_process.spawnSync()`.
-// Also, we cannot use the real PID if we want to print it before `child_process.spawn()` is run.
-// As a pro, it is shorter than a normal PID and never re-uses the same id.
-// As a con, it cannot be used to send signals.
-let COMMAND_ID = 0n;
-
-const validateVerbose = verbose => {
-	for (const fdVerbose of verbose) {
-		if (fdVerbose === false) {
-			throw new TypeError('The "verbose: false" option was renamed to "verbose: \'none\'".');
-		}
-
-		if (fdVerbose === true) {
-			throw new TypeError('The "verbose: true" option was renamed to "verbose: \'short\'".');
-		}
-
-		if (!VERBOSE_VALUES.includes(fdVerbose) && !isVerboseFunction(fdVerbose)) {
-			const allowedValues = VERBOSE_VALUES.map(allowedValue => `'${allowedValue}'`).join(', ');
-			throw new TypeError(`The "verbose" option must not be ${fdVerbose}. Allowed values are: ${allowedValues} or a function.`);
-		}
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/duration.js
-
-
-// Start counting time before spawning the subprocess
-const getStartTime = () => external_node_process_namespaceObject.hrtime.bigint();
-
-// Compute duration after the subprocess ended.
-// Printed by the `verbose` option.
-const getDurationMs = startTime => Number(external_node_process_namespaceObject.hrtime.bigint() - startTime) / 1e6;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/command.js
-
-
-
-
-
-
-// Compute `result.command`, `result.escapedCommand` and `verbose`-related information
-const handleCommand = (filePath, rawArguments, rawOptions) => {
-	const startTime = getStartTime();
-	const {command, escapedCommand} = escape_joinCommand(filePath, rawArguments);
-	const verbose = normalizeFdSpecificOption(rawOptions, 'verbose');
-	const verboseInfo = getVerboseInfo(verbose, escapedCommand, {...rawOptions});
-	start_logCommand(escapedCommand, verboseInfo);
-	return {
-		command,
-		escapedCommand,
-		startTime,
-		verboseInfo,
-	};
-};
-
-// EXTERNAL MODULE: ./node_modules/imagemin-jpegtran/node_modules/cross-spawn/index.js
-var node_modules_cross_spawn = __nccwpck_require__(12705);
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/npm-run-path/node_modules/path-key/index.js
-function path_key_pathKey(options = {}) {
-	const {
-		env = process.env,
-		platform = process.platform
-	} = options;
-
-	if (platform !== 'win32') {
-		return 'PATH';
-	}
-
-	return Object.keys(env).reverse().find(key => key.toUpperCase() === 'PATH') || 'Path';
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/npm-run-path/index.js
-
-
-
-
-
-const npm_run_path_npmRunPath = ({
-	cwd = external_node_process_namespaceObject.cwd(),
-	path: pathOption = external_node_process_namespaceObject.env[path_key_pathKey()],
-	preferLocal = true,
-	execPath = external_node_process_namespaceObject.execPath,
-	addExecPath = true,
-} = {}) => {
-	const cwdPath = external_node_path_namespaceObject.resolve(toPath(cwd));
-	const result = [];
-	const pathParts = pathOption.split(external_node_path_namespaceObject.delimiter);
-
-	if (preferLocal) {
-		npm_run_path_applyPreferLocal(result, pathParts, cwdPath);
-	}
-
-	if (addExecPath) {
-		npm_run_path_applyExecPath(result, pathParts, execPath, cwdPath);
-	}
-
-	return pathOption === '' || pathOption === external_node_path_namespaceObject.delimiter
-		? `${result.join(external_node_path_namespaceObject.delimiter)}${pathOption}`
-		: [...result, pathOption].join(external_node_path_namespaceObject.delimiter);
-};
-
-const npm_run_path_applyPreferLocal = (result, pathParts, cwdPath) => {
-	for (const directory of traversePathUp(cwdPath)) {
-		const pathPart = external_node_path_namespaceObject.join(directory, 'node_modules/.bin');
-		if (!pathParts.includes(pathPart)) {
-			result.push(pathPart);
-		}
-	}
-};
-
-// Ensure the running `node` binary is used
-const npm_run_path_applyExecPath = (result, pathParts, execPath, cwdPath) => {
-	const pathPart = external_node_path_namespaceObject.resolve(cwdPath, toPath(execPath), '..');
-	if (!pathParts.includes(pathPart)) {
-		result.push(pathPart);
-	}
-};
-
-const npm_run_path_npmRunPathEnv = ({env = external_node_process_namespaceObject.env, ...options} = {}) => {
-	env = {...env};
-
-	const pathName = path_key_pathKey({env});
-	options.path = env[pathName];
-	env[pathName] = npm_run_path_npmRunPath(options);
-
-	return env;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/final-error.js
-// When the subprocess fails, this is the error instance being returned.
-// If another error instance is being thrown, it is kept as `error.cause`.
-const getFinalError = (originalError, message, isSync) => {
-	const ErrorClass = isSync ? ExecaSyncError : ExecaError;
-	const options = originalError instanceof DiscardedError ? {} : {cause: originalError};
-	return new ErrorClass(message, options);
-};
-
-// Indicates that the error is used only to interrupt control flow, but not in the return value
-class DiscardedError extends Error {}
-
-// Proper way to set `error.name`: it should be inherited and non-enumerable
-const setErrorName = (ErrorClass, value) => {
-	Object.defineProperty(ErrorClass.prototype, 'name', {
-		value,
-		writable: true,
-		enumerable: false,
-		configurable: true,
-	});
-	Object.defineProperty(ErrorClass.prototype, execaErrorSymbol, {
-		value: true,
-		writable: false,
-		enumerable: false,
-		configurable: false,
-	});
-};
-
-// Unlike `instanceof`, this works across realms
-const isExecaError = error => isErrorInstance(error) && execaErrorSymbol in error;
-
-const execaErrorSymbol = Symbol('isExecaError');
-
-const isErrorInstance = value => Object.prototype.toString.call(value) === '[object Error]';
-
-// We use two different Error classes for async/sync methods since they have slightly different shape and types
-class ExecaError extends Error {}
-setErrorName(ExecaError, ExecaError.name);
-
-class ExecaSyncError extends Error {}
-setErrorName(ExecaSyncError, ExecaSyncError.name);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/human-signals/build/src/realtime.js
-
-const realtime_getRealtimeSignals=()=>{
-const length=realtime_SIGRTMAX-realtime_SIGRTMIN+1;
-return Array.from({length},realtime_getRealtimeSignal)
-};
-
-const realtime_getRealtimeSignal=(value,index)=>({
-name:`SIGRT${index+1}`,
-number:realtime_SIGRTMIN+index,
-action:"terminate",
-description:"Application-specific signal (realtime)",
-standard:"posix"
-});
-
-const realtime_SIGRTMIN=34;
-const realtime_SIGRTMAX=64;
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/human-signals/build/src/core.js
-
-
-const core_SIGNALS=[
-{
-name:"SIGHUP",
-number:1,
-action:"terminate",
-description:"Terminal closed",
-standard:"posix"
-},
-{
-name:"SIGINT",
-number:2,
-action:"terminate",
-description:"User interruption with CTRL-C",
-standard:"ansi"
-},
-{
-name:"SIGQUIT",
-number:3,
-action:"core",
-description:"User interruption with CTRL-\\",
-standard:"posix"
-},
-{
-name:"SIGILL",
-number:4,
-action:"core",
-description:"Invalid machine instruction",
-standard:"ansi"
-},
-{
-name:"SIGTRAP",
-number:5,
-action:"core",
-description:"Debugger breakpoint",
-standard:"posix"
-},
-{
-name:"SIGABRT",
-number:6,
-action:"core",
-description:"Aborted",
-standard:"ansi"
-},
-{
-name:"SIGIOT",
-number:6,
-action:"core",
-description:"Aborted",
-standard:"bsd"
-},
-{
-name:"SIGBUS",
-number:7,
-action:"core",
-description:
-"Bus error due to misaligned, non-existing address or paging error",
-standard:"bsd"
-},
-{
-name:"SIGEMT",
-number:7,
-action:"terminate",
-description:"Command should be emulated but is not implemented",
-standard:"other"
-},
-{
-name:"SIGFPE",
-number:8,
-action:"core",
-description:"Floating point arithmetic error",
-standard:"ansi"
-},
-{
-name:"SIGKILL",
-number:9,
-action:"terminate",
-description:"Forced termination",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGUSR1",
-number:10,
-action:"terminate",
-description:"Application-specific signal",
-standard:"posix"
-},
-{
-name:"SIGSEGV",
-number:11,
-action:"core",
-description:"Segmentation fault",
-standard:"ansi"
-},
-{
-name:"SIGUSR2",
-number:12,
-action:"terminate",
-description:"Application-specific signal",
-standard:"posix"
-},
-{
-name:"SIGPIPE",
-number:13,
-action:"terminate",
-description:"Broken pipe or socket",
-standard:"posix"
-},
-{
-name:"SIGALRM",
-number:14,
-action:"terminate",
-description:"Timeout or timer",
-standard:"posix"
-},
-{
-name:"SIGTERM",
-number:15,
-action:"terminate",
-description:"Termination",
-standard:"ansi"
-},
-{
-name:"SIGSTKFLT",
-number:16,
-action:"terminate",
-description:"Stack is empty or overflowed",
-standard:"other"
-},
-{
-name:"SIGCHLD",
-number:17,
-action:"ignore",
-description:"Child process terminated, paused or unpaused",
-standard:"posix"
-},
-{
-name:"SIGCLD",
-number:17,
-action:"ignore",
-description:"Child process terminated, paused or unpaused",
-standard:"other"
-},
-{
-name:"SIGCONT",
-number:18,
-action:"unpause",
-description:"Unpaused",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGSTOP",
-number:19,
-action:"pause",
-description:"Paused",
-standard:"posix",
-forced:true
-},
-{
-name:"SIGTSTP",
-number:20,
-action:"pause",
-description:"Paused using CTRL-Z or \"suspend\"",
-standard:"posix"
-},
-{
-name:"SIGTTIN",
-number:21,
-action:"pause",
-description:"Background process cannot read terminal input",
-standard:"posix"
-},
-{
-name:"SIGBREAK",
-number:21,
-action:"terminate",
-description:"User interruption with CTRL-BREAK",
-standard:"other"
-},
-{
-name:"SIGTTOU",
-number:22,
-action:"pause",
-description:"Background process cannot write to terminal output",
-standard:"posix"
-},
-{
-name:"SIGURG",
-number:23,
-action:"ignore",
-description:"Socket received out-of-band data",
-standard:"bsd"
-},
-{
-name:"SIGXCPU",
-number:24,
-action:"core",
-description:"Process timed out",
-standard:"bsd"
-},
-{
-name:"SIGXFSZ",
-number:25,
-action:"core",
-description:"File too big",
-standard:"bsd"
-},
-{
-name:"SIGVTALRM",
-number:26,
-action:"terminate",
-description:"Timeout or timer",
-standard:"bsd"
-},
-{
-name:"SIGPROF",
-number:27,
-action:"terminate",
-description:"Timeout or timer",
-standard:"bsd"
-},
-{
-name:"SIGWINCH",
-number:28,
-action:"ignore",
-description:"Terminal window size changed",
-standard:"bsd"
-},
-{
-name:"SIGIO",
-number:29,
-action:"terminate",
-description:"I/O is available",
-standard:"other"
-},
-{
-name:"SIGPOLL",
-number:29,
-action:"terminate",
-description:"Watched event",
-standard:"other"
-},
-{
-name:"SIGINFO",
-number:29,
-action:"ignore",
-description:"Request for process information",
-standard:"other"
-},
-{
-name:"SIGPWR",
-number:30,
-action:"terminate",
-description:"Device running out of power",
-standard:"systemv"
-},
-{
-name:"SIGSYS",
-number:31,
-action:"core",
-description:"Invalid system call",
-standard:"other"
-},
-{
-name:"SIGUNUSED",
-number:31,
-action:"terminate",
-description:"Invalid system call",
-standard:"other"
-}];
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/human-signals/build/src/signals.js
-
-
-
-
-
-
-
-const signals_getSignals=()=>{
-const realtimeSignals=realtime_getRealtimeSignals();
-const signals=[...core_SIGNALS,...realtimeSignals].map(signals_normalizeSignal);
-return signals
-};
-
-
-
-
-
-
-
-const signals_normalizeSignal=({
-name,
-number:defaultNumber,
-description,
-action,
-forced=false,
-standard
-})=>{
-const{
-signals:{[name]:constantSignal}
-}=external_node_os_namespaceObject.constants;
-const supported=constantSignal!==undefined;
-const number=supported?constantSignal:defaultNumber;
-return{name,number,description,supported,action,forced,standard}
-};
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/human-signals/build/src/main.js
-
-
-
-
-
-
-
-const main_getSignalsByName=()=>{
-const signals=signals_getSignals();
-return Object.fromEntries(signals.map(main_getSignalByName))
-};
-
-const main_getSignalByName=({
-name,
-number,
-description,
-supported,
-action,
-forced,
-standard
-})=>[name,{name,number,description,supported,action,forced,standard}];
-
-const main_signalsByName=main_getSignalsByName();
-
-
-
-
-const main_getSignalsByNumber=()=>{
-const signals=signals_getSignals();
-const length=realtime_SIGRTMAX+1;
-const signalsA=Array.from({length},(value,number)=>
-main_getSignalByNumber(number,signals)
-);
-return Object.assign({},...signalsA)
-};
-
-const main_getSignalByNumber=(number,signals)=>{
-const signal=main_findSignalByNumber(number,signals);
-
-if(signal===undefined){
-return{}
-}
-
-const{name,description,supported,action,forced,standard}=signal;
-return{
-[number]:{
-name,
-number,
-description,
-supported,
-action,
-forced,
-standard
-}
-}
-};
-
-
-
-const main_findSignalByNumber=(number,signals)=>{
-const signal=signals.find(({name})=>external_node_os_namespaceObject.constants.signals[name]===number);
-
-if(signal!==undefined){
-return signal
-}
-
-return signals.find((signalA)=>signalA.number===number)
-};
-
-const main_signalsByNumber=main_getSignalsByNumber();
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/signal.js
-
-
-
-// Normalize signals for comparison purpose.
-// Also validate the signal exists.
-const normalizeKillSignal = killSignal => {
-	const optionName = 'option `killSignal`';
-	if (killSignal === 0) {
-		throw new TypeError(`Invalid ${optionName}: 0 cannot be used.`);
-	}
-
-	return signal_normalizeSignal(killSignal, optionName);
-};
-
-const normalizeSignalArgument = signal => signal === 0
-	? signal
-	: signal_normalizeSignal(signal, '`subprocess.kill()`\'s argument');
-
-const signal_normalizeSignal = (signalNameOrInteger, optionName) => {
-	if (Number.isInteger(signalNameOrInteger)) {
-		return normalizeSignalInteger(signalNameOrInteger, optionName);
-	}
-
-	if (typeof signalNameOrInteger === 'string') {
-		return normalizeSignalName(signalNameOrInteger, optionName);
-	}
-
-	throw new TypeError(`Invalid ${optionName} ${String(signalNameOrInteger)}: it must be a string or an integer.\n${getAvailableSignals()}`);
-};
-
-const normalizeSignalInteger = (signalInteger, optionName) => {
-	if (signalsIntegerToName.has(signalInteger)) {
-		return signalsIntegerToName.get(signalInteger);
-	}
-
-	throw new TypeError(`Invalid ${optionName} ${signalInteger}: this signal integer does not exist.\n${getAvailableSignals()}`);
-};
-
-const getSignalsIntegerToName = () => new Map(Object.entries(external_node_os_namespaceObject.constants.signals)
-	.reverse()
-	.map(([signalName, signalInteger]) => [signalInteger, signalName]));
-
-const signalsIntegerToName = getSignalsIntegerToName();
-
-const normalizeSignalName = (signalName, optionName) => {
-	if (signalName in external_node_os_namespaceObject.constants.signals) {
-		return signalName;
-	}
-
-	if (signalName.toUpperCase() in external_node_os_namespaceObject.constants.signals) {
-		throw new TypeError(`Invalid ${optionName} '${signalName}': please rename it to '${signalName.toUpperCase()}'.`);
-	}
-
-	throw new TypeError(`Invalid ${optionName} '${signalName}': this signal name does not exist.\n${getAvailableSignals()}`);
-};
-
-const getAvailableSignals = () => `Available signal names: ${getAvailableSignalNames()}.
-Available signal numbers: ${getAvailableSignalIntegers()}.`;
-
-const getAvailableSignalNames = () => Object.keys(external_node_os_namespaceObject.constants.signals)
-	.sort()
-	.map(signalName => `'${signalName}'`)
-	.join(', ');
-
-const getAvailableSignalIntegers = () => [...new Set(Object.values(external_node_os_namespaceObject.constants.signals)
-	.sort((signalInteger, signalIntegerTwo) => signalInteger - signalIntegerTwo))]
-	.join(', ');
-
-// Human-friendly description of a signal
-const getSignalDescription = signal => main_signalsByName[signal].description;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/kill.js
-
-
-
-
-// Normalize the `forceKillAfterDelay` option
-const normalizeForceKillAfterDelay = forceKillAfterDelay => {
-	if (forceKillAfterDelay === false) {
-		return forceKillAfterDelay;
-	}
-
-	if (forceKillAfterDelay === true) {
-		return kill_DEFAULT_FORCE_KILL_TIMEOUT;
-	}
-
-	if (!Number.isFinite(forceKillAfterDelay) || forceKillAfterDelay < 0) {
-		throw new TypeError(`Expected the \`forceKillAfterDelay\` option to be a non-negative integer, got \`${forceKillAfterDelay}\` (${typeof forceKillAfterDelay})`);
-	}
-
-	return forceKillAfterDelay;
-};
-
-const kill_DEFAULT_FORCE_KILL_TIMEOUT = 1000 * 5;
-
-// Monkey-patches `subprocess.kill()` to add `forceKillAfterDelay` behavior and `.kill(error)`
-const subprocessKill = (
-	{kill, options: {forceKillAfterDelay, killSignal}, onInternalError, context, controller},
-	signalOrError,
-	errorArgument,
-) => {
-	const {signal, error} = parseKillArguments(signalOrError, errorArgument, killSignal);
-	emitKillError(error, onInternalError);
-	const killResult = kill(signal);
-	kill_setKillTimeout({
-		kill,
-		signal,
-		forceKillAfterDelay,
-		killSignal,
-		killResult,
-		context,
-		controller,
-	});
-	return killResult;
-};
-
-const parseKillArguments = (signalOrError, errorArgument, killSignal) => {
-	const [signal = killSignal, error] = isErrorInstance(signalOrError)
-		? [undefined, signalOrError]
-		: [signalOrError, errorArgument];
-
-	if (typeof signal !== 'string' && !Number.isInteger(signal)) {
-		throw new TypeError(`The first argument must be an error instance or a signal name string/integer: ${String(signal)}`);
-	}
-
-	if (error !== undefined && !isErrorInstance(error)) {
-		throw new TypeError(`The second argument is optional. If specified, it must be an error instance: ${error}`);
-	}
-
-	return {signal: normalizeSignalArgument(signal), error};
-};
-
-// Fails right away when calling `subprocess.kill(error)`.
-// Does not wait for actual signal termination.
-// Uses a deferred promise instead of the `error` event on the subprocess, as this is less intrusive.
-const emitKillError = (error, onInternalError) => {
-	if (error !== undefined) {
-		onInternalError.reject(error);
-	}
-};
-
-const kill_setKillTimeout = async ({kill, signal, forceKillAfterDelay, killSignal, killResult, context, controller}) => {
-	if (signal === killSignal && killResult) {
-		killOnTimeout({
-			kill,
-			forceKillAfterDelay,
-			context,
-			controllerSignal: controller.signal,
-		});
-	}
-};
-
-// Forcefully terminate a subprocess after a timeout
-const killOnTimeout = async ({kill, forceKillAfterDelay, context, controllerSignal}) => {
-	if (forceKillAfterDelay === false) {
-		return;
-	}
-
-	try {
-		await (0,external_node_timers_promises_namespaceObject.setTimeout)(forceKillAfterDelay, undefined, {signal: controllerSignal});
-		if (kill('SIGKILL')) {
-			context.isForcefullyTerminated ??= true;
-		}
-	} catch {}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/utils/abort-signal.js
-
-
-// Combines `util.aborted()` and `events.addAbortListener()`: promise-based and cleaned up with a stop signal
-const onAbortedSignal = async (mainSignal, stopSignal) => {
-	if (!mainSignal.aborted) {
-		await (0,external_node_events_.once)(mainSignal, 'abort', {signal: stopSignal});
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/cancel.js
-
-
-// Validate the `cancelSignal` option
-const validateCancelSignal = ({cancelSignal}) => {
-	if (cancelSignal !== undefined && Object.prototype.toString.call(cancelSignal) !== '[object AbortSignal]') {
-		throw new Error(`The \`cancelSignal\` option must be an AbortSignal: ${String(cancelSignal)}`);
-	}
-};
-
-// Terminate the subprocess when aborting the `cancelSignal` option and `gracefulSignal` is `false`
-const throwOnCancel = ({subprocess, cancelSignal, gracefulCancel, context, controller}) => cancelSignal === undefined || gracefulCancel
-	? []
-	: [terminateOnCancel(subprocess, cancelSignal, context, controller)];
-
-const terminateOnCancel = async (subprocess, cancelSignal, context, {signal}) => {
-	await onAbortedSignal(cancelSignal, signal);
-	context.terminationReason ??= 'cancel';
-	subprocess.kill();
-	throw cancelSignal.reason;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/validation.js
-// Validate the IPC channel is connected before receiving/sending messages
-const validateIpcMethod = ({methodName, isSubprocess, ipc, isConnected}) => {
-	validateIpcOption(methodName, isSubprocess, ipc);
-	validateConnection(methodName, isSubprocess, isConnected);
-};
-
-// Better error message when forgetting to set `ipc: true` and using the IPC methods
-const validateIpcOption = (methodName, isSubprocess, ipc) => {
-	if (!ipc) {
-		throw new Error(`${getMethodName(methodName, isSubprocess)} can only be used if the \`ipc\` option is \`true\`.`);
-	}
-};
-
-// Better error message when one process does not send/receive messages once the other process has disconnected.
-// This also makes it clear that any buffered messages are lost once either process has disconnected.
-// Also when aborting `cancelSignal` after disconnecting the IPC.
-const validateConnection = (methodName, isSubprocess, isConnected) => {
-	if (!isConnected) {
-		throw new Error(`${getMethodName(methodName, isSubprocess)} cannot be used: the ${getOtherProcessName(isSubprocess)} has already exited or disconnected.`);
-	}
-};
-
-// When `getOneMessage()` could not complete due to an early disconnection
-const throwOnEarlyDisconnect = isSubprocess => {
-	throw new Error(`${getMethodName('getOneMessage', isSubprocess)} could not complete: the ${getOtherProcessName(isSubprocess)} exited or disconnected.`);
-};
-
-// When both processes use `sendMessage()` with `strict` at the same time
-const throwOnStrictDeadlockError = isSubprocess => {
-	throw new Error(`${getMethodName('sendMessage', isSubprocess)} failed: the ${getOtherProcessName(isSubprocess)} is sending a message too, instead of listening to incoming messages.
-This can be fixed by both sending a message and listening to incoming messages at the same time:
-
-const [receivedMessage] = await Promise.all([
-	${getMethodName('getOneMessage', isSubprocess)},
-	${getMethodName('sendMessage', isSubprocess, 'message, {strict: true}')},
-]);`);
-};
-
-// When the other process used `strict` but the current process had I/O error calling `sendMessage()` for the response
-const getStrictResponseError = (error, isSubprocess) => new Error(`${getMethodName('sendMessage', isSubprocess)} failed when sending an acknowledgment response to the ${getOtherProcessName(isSubprocess)}.`, {cause: error});
-
-// When using `strict` but the other process was not listening for messages
-const throwOnMissingStrict = isSubprocess => {
-	throw new Error(`${getMethodName('sendMessage', isSubprocess)} failed: the ${getOtherProcessName(isSubprocess)} is not listening to incoming messages.`);
-};
-
-// When using `strict` but the other process disconnected before receiving the message
-const throwOnStrictDisconnect = isSubprocess => {
-	throw new Error(`${getMethodName('sendMessage', isSubprocess)} failed: the ${getOtherProcessName(isSubprocess)} exited without listening to incoming messages.`);
-};
-
-// When the current process disconnects while the subprocess is listening to `cancelSignal`
-const getAbortDisconnectError = () => new Error(`\`cancelSignal\` aborted: the ${getOtherProcessName(true)} disconnected.`);
-
-// When the subprocess uses `cancelSignal` but not the current process
-const throwOnMissingParent = () => {
-	throw new Error('`getCancelSignal()` cannot be used without setting the `cancelSignal` subprocess option.');
-};
-
-// EPIPE can happen when sending a message to a subprocess that is closing but has not disconnected yet
-const handleEpipeError = ({error, methodName, isSubprocess}) => {
-	if (error.code === 'EPIPE') {
-		throw new Error(`${getMethodName(methodName, isSubprocess)} cannot be used: the ${getOtherProcessName(isSubprocess)} is disconnecting.`, {cause: error});
-	}
-};
-
-// Better error message when sending messages which cannot be serialized.
-// Works with both `serialization: 'advanced'` and `serialization: 'json'`.
-const handleSerializationError = ({error, methodName, isSubprocess, message}) => {
-	if (isSerializationError(error)) {
-		throw new Error(`${getMethodName(methodName, isSubprocess)}'s argument type is invalid: the message cannot be serialized: ${String(message)}.`, {cause: error});
-	}
-};
-
-const isSerializationError = ({code, message}) => SERIALIZATION_ERROR_CODES.has(code)
-	|| SERIALIZATION_ERROR_MESSAGES.some(serializationErrorMessage => message.includes(serializationErrorMessage));
-
-// `error.code` set by Node.js when it failed to serialize the message
-const SERIALIZATION_ERROR_CODES = new Set([
-	// Message is `undefined`
-	'ERR_MISSING_ARGS',
-	// Message is a function, a bigint, a symbol
-	'ERR_INVALID_ARG_TYPE',
-]);
-
-// `error.message` set by Node.js when it failed to serialize the message
-const SERIALIZATION_ERROR_MESSAGES = [
-	// Message is a promise or a proxy, with `serialization: 'advanced'`
-	'could not be cloned',
-	// Message has cycles, with `serialization: 'json'`
-	'circular structure',
-	// Message has cycles inside toJSON(), with `serialization: 'json'`
-	'call stack size exceeded',
-];
-
-const getMethodName = (methodName, isSubprocess, parameters = '') => methodName === 'cancelSignal'
-	? '`cancelSignal`\'s `controller.abort()`'
-	: `${getNamespaceName(isSubprocess)}${methodName}(${parameters})`;
-
-const getNamespaceName = isSubprocess => isSubprocess ? '' : 'subprocess.';
-
-const getOtherProcessName = isSubprocess => isSubprocess ? 'parent process' : 'subprocess';
-
-// When any error arises, we disconnect the IPC.
-// Otherwise, it is likely that one of the processes will stop sending/receiving messages.
-// This would leave the other process hanging.
-const disconnect = anyProcess => {
-	if (anyProcess.connected) {
-		anyProcess.disconnect();
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/utils/deferred.js
-const createDeferred = () => {
-	const methods = {};
-	const promise = new Promise((resolve, reject) => {
-		Object.assign(methods, {resolve, reject});
-	});
-	return Object.assign(promise, methods);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/fd-options.js
-
-
-// Retrieve stream targeted by the `to` option
-const getToStream = (destination, to = 'stdin') => {
-	const isWritable = true;
-	const {options, fileDescriptors} = SUBPROCESS_OPTIONS.get(destination);
-	const fdNumber = getFdNumber(fileDescriptors, to, isWritable);
-	const destinationStream = destination.stdio[fdNumber];
-
-	if (destinationStream === null) {
-		throw new TypeError(getInvalidStdioOptionMessage(fdNumber, to, options, isWritable));
-	}
-
-	return destinationStream;
-};
-
-// Retrieve stream targeted by the `from` option
-const getFromStream = (source, from = 'stdout') => {
-	const isWritable = false;
-	const {options, fileDescriptors} = SUBPROCESS_OPTIONS.get(source);
-	const fdNumber = getFdNumber(fileDescriptors, from, isWritable);
-	const sourceStream = fdNumber === 'all' ? source.all : source.stdio[fdNumber];
-
-	if (sourceStream === null || sourceStream === undefined) {
-		throw new TypeError(getInvalidStdioOptionMessage(fdNumber, from, options, isWritable));
-	}
-
-	return sourceStream;
-};
-
-// Keeps track of the options passed to each Execa call
-const SUBPROCESS_OPTIONS = new WeakMap();
-
-const getFdNumber = (fileDescriptors, fdName, isWritable) => {
-	const fdNumber = parseFdNumber(fdName, isWritable);
-	validateFdNumber(fdNumber, fdName, isWritable, fileDescriptors);
-	return fdNumber;
-};
-
-const parseFdNumber = (fdName, isWritable) => {
-	const fdNumber = parseFd(fdName);
-	if (fdNumber !== undefined) {
-		return fdNumber;
-	}
-
-	const {validOptions, defaultValue} = isWritable
-		? {validOptions: '"stdin"', defaultValue: 'stdin'}
-		: {validOptions: '"stdout", "stderr", "all"', defaultValue: 'stdout'};
-	throw new TypeError(`"${getOptionName(isWritable)}" must not be "${fdName}".
-It must be ${validOptions} or "fd3", "fd4" (and so on).
-It is optional and defaults to "${defaultValue}".`);
-};
-
-const validateFdNumber = (fdNumber, fdName, isWritable, fileDescriptors) => {
-	const fileDescriptor = fileDescriptors[getUsedDescriptor(fdNumber)];
-	if (fileDescriptor === undefined) {
-		throw new TypeError(`"${getOptionName(isWritable)}" must not be ${fdName}. That file descriptor does not exist.
-Please set the "stdio" option to ensure that file descriptor exists.`);
-	}
-
-	if (fileDescriptor.direction === 'input' && !isWritable) {
-		throw new TypeError(`"${getOptionName(isWritable)}" must not be ${fdName}. It must be a readable stream, not writable.`);
-	}
-
-	if (fileDescriptor.direction !== 'input' && isWritable) {
-		throw new TypeError(`"${getOptionName(isWritable)}" must not be ${fdName}. It must be a writable stream, not readable.`);
-	}
-};
-
-const getInvalidStdioOptionMessage = (fdNumber, fdName, options, isWritable) => {
-	if (fdNumber === 'all' && !options.all) {
-		return 'The "all" option must be true to use "from: \'all\'".';
-	}
-
-	const {optionName, optionValue} = getInvalidStdioOption(fdNumber, options);
-	return `The "${optionName}: ${serializeOptionValue(optionValue)}" option is incompatible with using "${getOptionName(isWritable)}: ${serializeOptionValue(fdName)}".
-Please set this option with "pipe" instead.`;
-};
-
-const getInvalidStdioOption = (fdNumber, {stdin, stdout, stderr, stdio}) => {
-	const usedDescriptor = getUsedDescriptor(fdNumber);
-
-	if (usedDescriptor === 0 && stdin !== undefined) {
-		return {optionName: 'stdin', optionValue: stdin};
-	}
-
-	if (usedDescriptor === 1 && stdout !== undefined) {
-		return {optionName: 'stdout', optionValue: stdout};
-	}
-
-	if (usedDescriptor === 2 && stderr !== undefined) {
-		return {optionName: 'stderr', optionValue: stderr};
-	}
-
-	return {optionName: `stdio[${usedDescriptor}]`, optionValue: stdio[usedDescriptor]};
-};
-
-const getUsedDescriptor = fdNumber => fdNumber === 'all' ? 1 : fdNumber;
-
-const getOptionName = isWritable => isWritable ? 'to' : 'from';
-
-const serializeOptionValue = value => {
-	if (typeof value === 'string') {
-		return `'${value}'`;
-	}
-
-	return typeof value === 'number' ? `${value}` : 'Stream';
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/utils/max-listeners.js
-
-
-// Temporarily increase the maximum number of listeners on an eventEmitter
-const incrementMaxListeners = (eventEmitter, maxListenersIncrement, signal) => {
-	const maxListeners = eventEmitter.getMaxListeners();
-	if (maxListeners === 0 || maxListeners === Number.POSITIVE_INFINITY) {
-		return;
-	}
-
-	eventEmitter.setMaxListeners(maxListeners + maxListenersIncrement);
-	(0,external_node_events_.addAbortListener)(signal, () => {
-		eventEmitter.setMaxListeners(eventEmitter.getMaxListeners() - maxListenersIncrement);
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/reference.js
-// By default, Node.js keeps the subprocess alive while it has a `message` or `disconnect` listener.
-// We replicate the same logic for the events that we proxy.
-// This ensures the subprocess is kept alive while `getOneMessage()` and `getEachMessage()` are ongoing.
-// This is not a problem with `sendMessage()` since Node.js handles that method automatically.
-// We do not use `anyProcess.channel.ref()` since this would prevent the automatic `.channel.refCounted()` Node.js is doing.
-// We keep a reference to `anyProcess.channel` since it might be `null` while `getOneMessage()` or `getEachMessage()` is still processing debounced messages.
-// See https://github.com/nodejs/node/blob/2aaeaa863c35befa2ebaa98fb7737ec84df4d8e9/lib/internal/child_process.js#L547
-const addReference = (channel, reference) => {
-	if (reference) {
-		addReferenceCount(channel);
-	}
-};
-
-const addReferenceCount = channel => {
-	channel.refCounted();
-};
-
-const removeReference = (channel, reference) => {
-	if (reference) {
-		removeReferenceCount(channel);
-	}
-};
-
-const removeReferenceCount = channel => {
-	channel.unrefCounted();
-};
-
-// To proxy events, we setup some global listeners on the `message` and `disconnect` events.
-// Those should not keep the subprocess alive, so we remove the automatic counting that Node.js is doing.
-// See https://github.com/nodejs/node/blob/1b965270a9c273d4cf70e8808e9d28b9ada7844f/lib/child_process.js#L180
-const undoAddedReferences = (channel, isSubprocess) => {
-	if (isSubprocess) {
-		removeReferenceCount(channel);
-		removeReferenceCount(channel);
-	}
-};
-
-// Reverse it during `disconnect`
-const redoAddedReferences = (channel, isSubprocess) => {
-	if (isSubprocess) {
-		addReferenceCount(channel);
-		addReferenceCount(channel);
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/incoming.js
-
-
-
-
-
-
-
-// By default, Node.js buffers `message` events.
-//  - Buffering happens when there is a `message` event is emitted but there is no handler.
-//  - As soon as a `message` event handler is set, all buffered `message` events are emitted, emptying the buffer.
-//  - This happens both in the current process and the subprocess.
-//  - See https://github.com/nodejs/node/blob/501546e8f37059cd577041e23941b640d0d4d406/lib/internal/child_process.js#L719
-// This is helpful. Notably, this allows sending messages to a subprocess that's still initializing.
-// However, it has several problems.
-//  - This works with `events.on()` but not `events.once()` since all buffered messages are emitted at once.
-//    For example, users cannot call `await getOneMessage()`/`getEachMessage()` multiple times in a row.
-//  - When a user intentionally starts listening to `message` at a specific point in time, past `message` events are replayed, which might be unexpected.
-//  - Buffering is unlimited, which might lead to an out-of-memory crash.
-//  - This does not work well with multiple consumers.
-//    For example, Execa consumes events with both `result.ipcOutput` and manual IPC calls like `getOneMessage()`.
-//    Since `result.ipcOutput` reads all incoming messages, no buffering happens for manual IPC calls.
-//  - Forgetting to setup a `message` listener, or setting it up too late, is a programming mistake.
-//    The default behavior does not allow users to realize they made that mistake.
-// To solve those problems, instead of buffering messages, we debounce them.
-// The `message` event so it is emitted at most once per macrotask.
-const onMessage = async ({anyProcess, channel, isSubprocess, ipcEmitter}, wrappedMessage) => {
-	if (handleStrictResponse(wrappedMessage) || handleAbort(wrappedMessage)) {
-		return;
-	}
-
-	if (!INCOMING_MESSAGES.has(anyProcess)) {
-		INCOMING_MESSAGES.set(anyProcess, []);
-	}
-
-	const incomingMessages = INCOMING_MESSAGES.get(anyProcess);
-	incomingMessages.push(wrappedMessage);
-
-	if (incomingMessages.length > 1) {
-		return;
-	}
-
-	while (incomingMessages.length > 0) {
-		// eslint-disable-next-line no-await-in-loop
-		await waitForOutgoingMessages(anyProcess, ipcEmitter, wrappedMessage);
-		// eslint-disable-next-line no-await-in-loop
-		await external_node_timers_promises_namespaceObject.scheduler.yield();
-
-		// eslint-disable-next-line no-await-in-loop
-		const message = await handleStrictRequest({
-			wrappedMessage: incomingMessages[0],
-			anyProcess,
-			channel,
-			isSubprocess,
-			ipcEmitter,
-		});
-
-		incomingMessages.shift();
-		ipcEmitter.emit('message', message);
-		ipcEmitter.emit('message:done');
-	}
-};
-
-// If the `message` event is currently debounced, the `disconnect` event must wait for it
-const onDisconnect = async ({anyProcess, channel, isSubprocess, ipcEmitter, boundOnMessage}) => {
-	abortOnDisconnect();
-
-	const incomingMessages = INCOMING_MESSAGES.get(anyProcess);
-	while (incomingMessages?.length > 0) {
-		// eslint-disable-next-line no-await-in-loop
-		await (0,external_node_events_.once)(ipcEmitter, 'message:done');
-	}
-
-	anyProcess.removeListener('message', boundOnMessage);
-	redoAddedReferences(channel, isSubprocess);
-	ipcEmitter.connected = false;
-	ipcEmitter.emit('disconnect');
-};
-
-const INCOMING_MESSAGES = new WeakMap();
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/forward.js
-
-
-
-
-// Forward the `message` and `disconnect` events from the process and subprocess to a proxy emitter.
-// This prevents the `error` event from stopping IPC.
-// This also allows debouncing the `message` event.
-const getIpcEmitter = (anyProcess, channel, isSubprocess) => {
-	if (IPC_EMITTERS.has(anyProcess)) {
-		return IPC_EMITTERS.get(anyProcess);
-	}
-
-	// Use an `EventEmitter`, like the `process` that is being proxied
-	// eslint-disable-next-line unicorn/prefer-event-target
-	const ipcEmitter = new external_node_events_.EventEmitter();
-	ipcEmitter.connected = true;
-	IPC_EMITTERS.set(anyProcess, ipcEmitter);
-	forwardEvents({
-		ipcEmitter,
-		anyProcess,
-		channel,
-		isSubprocess,
-	});
-	return ipcEmitter;
-};
-
-const IPC_EMITTERS = new WeakMap();
-
-// The `message` and `disconnect` events are buffered in the subprocess until the first listener is setup.
-// However, unbuffering happens after one tick, so this give enough time for the caller to setup the listener on the proxy emitter first.
-// See https://github.com/nodejs/node/blob/2aaeaa863c35befa2ebaa98fb7737ec84df4d8e9/lib/internal/child_process.js#L721
-const forwardEvents = ({ipcEmitter, anyProcess, channel, isSubprocess}) => {
-	const boundOnMessage = onMessage.bind(undefined, {
-		anyProcess,
-		channel,
-		isSubprocess,
-		ipcEmitter,
-	});
-	anyProcess.on('message', boundOnMessage);
-	anyProcess.once('disconnect', onDisconnect.bind(undefined, {
-		anyProcess,
-		channel,
-		isSubprocess,
-		ipcEmitter,
-		boundOnMessage,
-	}));
-	undoAddedReferences(channel, isSubprocess);
-};
-
-// Check whether there might still be some `message` events to receive
-const isConnected = anyProcess => {
-	const ipcEmitter = IPC_EMITTERS.get(anyProcess);
-	return ipcEmitter === undefined
-		? anyProcess.channel !== null
-		: ipcEmitter.connected;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/strict.js
-
-
-
-
-
-
-
-
-// When using the `strict` option, wrap the message with metadata during `sendMessage()`
-const handleSendStrict = ({anyProcess, channel, isSubprocess, message, strict}) => {
-	if (!strict) {
-		return message;
-	}
-
-	const ipcEmitter = getIpcEmitter(anyProcess, channel, isSubprocess);
-	const hasListeners = hasMessageListeners(anyProcess, ipcEmitter);
-	return {
-		id: count++,
-		type: REQUEST_TYPE,
-		message,
-		hasListeners,
-	};
-};
-
-let count = 0n;
-
-// Handles when both processes are calling `sendMessage()` with `strict` at the same time.
-// If neither process is listening, this would create a deadlock. We detect it and throw.
-const validateStrictDeadlock = (outgoingMessages, wrappedMessage) => {
-	if (wrappedMessage?.type !== REQUEST_TYPE || wrappedMessage.hasListeners) {
-		return;
-	}
-
-	for (const {id} of outgoingMessages) {
-		if (id !== undefined) {
-			STRICT_RESPONSES[id].resolve({isDeadlock: true, hasListeners: false});
-		}
-	}
-};
-
-// The other process then sends the acknowledgment back as a response
-const handleStrictRequest = async ({wrappedMessage, anyProcess, channel, isSubprocess, ipcEmitter}) => {
-	if (wrappedMessage?.type !== REQUEST_TYPE || !anyProcess.connected) {
-		return wrappedMessage;
-	}
-
-	const {id, message} = wrappedMessage;
-	const response = {id, type: RESPONSE_TYPE, message: hasMessageListeners(anyProcess, ipcEmitter)};
-
-	try {
-		await sendMessage({
-			anyProcess,
-			channel,
-			isSubprocess,
-			ipc: true,
-		}, response);
-	} catch (error) {
-		ipcEmitter.emit('strict:error', error);
-	}
-
-	return message;
-};
-
-// Reception of the acknowledgment response
-const handleStrictResponse = wrappedMessage => {
-	if (wrappedMessage?.type !== RESPONSE_TYPE) {
-		return false;
-	}
-
-	const {id, message: hasListeners} = wrappedMessage;
-	STRICT_RESPONSES[id]?.resolve({isDeadlock: false, hasListeners});
-	return true;
-};
-
-// Wait for the other process to receive the message from `sendMessage()`
-const waitForStrictResponse = async (wrappedMessage, anyProcess, isSubprocess) => {
-	if (wrappedMessage?.type !== REQUEST_TYPE) {
-		return;
-	}
-
-	const deferred = createDeferred();
-	STRICT_RESPONSES[wrappedMessage.id] = deferred;
-	const controller = new AbortController();
-
-	try {
-		const {isDeadlock, hasListeners} = await Promise.race([
-			deferred,
-			throwOnDisconnect(anyProcess, isSubprocess, controller),
-		]);
-
-		if (isDeadlock) {
-			throwOnStrictDeadlockError(isSubprocess);
-		}
-
-		if (!hasListeners) {
-			throwOnMissingStrict(isSubprocess);
-		}
-	} finally {
-		controller.abort();
-		delete STRICT_RESPONSES[wrappedMessage.id];
-	}
-};
-
-const STRICT_RESPONSES = {};
-
-const throwOnDisconnect = async (anyProcess, isSubprocess, {signal}) => {
-	incrementMaxListeners(anyProcess, 1, signal);
-	await (0,external_node_events_.once)(anyProcess, 'disconnect', {signal});
-	throwOnStrictDisconnect(isSubprocess);
-};
-
-const REQUEST_TYPE = 'execa:ipc:request';
-const RESPONSE_TYPE = 'execa:ipc:response';
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/outgoing.js
-
-
-
-
-
-// When `sendMessage()` is ongoing, any `message` being received waits before being emitted.
-// This allows calling one or multiple `await sendMessage()` followed by `await getOneMessage()`/`await getEachMessage()`.
-// Without running into a race condition when the other process sends a response too fast, before the current process set up a listener.
-const startSendMessage = (anyProcess, wrappedMessage, strict) => {
-	if (!OUTGOING_MESSAGES.has(anyProcess)) {
-		OUTGOING_MESSAGES.set(anyProcess, new Set());
-	}
-
-	const outgoingMessages = OUTGOING_MESSAGES.get(anyProcess);
-	const onMessageSent = createDeferred();
-	const id = strict ? wrappedMessage.id : undefined;
-	const outgoingMessage = {onMessageSent, id};
-	outgoingMessages.add(outgoingMessage);
-	return {outgoingMessages, outgoingMessage};
-};
-
-const endSendMessage = ({outgoingMessages, outgoingMessage}) => {
-	outgoingMessages.delete(outgoingMessage);
-	outgoingMessage.onMessageSent.resolve();
-};
-
-// Await while `sendMessage()` is ongoing, unless there is already a `message` listener
-const waitForOutgoingMessages = async (anyProcess, ipcEmitter, wrappedMessage) => {
-	while (!hasMessageListeners(anyProcess, ipcEmitter) && OUTGOING_MESSAGES.get(anyProcess)?.size > 0) {
-		const outgoingMessages = [...OUTGOING_MESSAGES.get(anyProcess)];
-		validateStrictDeadlock(outgoingMessages, wrappedMessage);
-		// eslint-disable-next-line no-await-in-loop
-		await Promise.all(outgoingMessages.map(({onMessageSent}) => onMessageSent));
-	}
-};
-
-const OUTGOING_MESSAGES = new WeakMap();
-
-// Whether any `message` listener is setup
-const hasMessageListeners = (anyProcess, ipcEmitter) => ipcEmitter.listenerCount('message') > getMinListenerCount(anyProcess);
-
-// When `buffer` is `false`, we set up a `message` listener that should be ignored.
-// That listener is only meant to intercept `strict` acknowledgement responses.
-const getMinListenerCount = anyProcess => SUBPROCESS_OPTIONS.has(anyProcess)
-	&& !getFdSpecificValue(SUBPROCESS_OPTIONS.get(anyProcess).options.buffer, 'ipc')
-	? 1
-	: 0;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/send.js
-
-
-
-
-
-// Like `[sub]process.send()` but promise-based.
-// We do not `await subprocess` during `.sendMessage()` nor `.getOneMessage()` since those methods are transient.
-// Users would still need to `await subprocess` after the method is done.
-// Also, this would prevent `unhandledRejection` event from being emitted, making it silent.
-const sendMessage = ({anyProcess, channel, isSubprocess, ipc}, message, {strict = false} = {}) => {
-	const methodName = 'sendMessage';
-	validateIpcMethod({
-		methodName,
-		isSubprocess,
-		ipc,
-		isConnected: anyProcess.connected,
-	});
-
-	return sendMessageAsync({
-		anyProcess,
-		channel,
-		methodName,
-		isSubprocess,
-		message,
-		strict,
-	});
-};
-
-const sendMessageAsync = async ({anyProcess, channel, methodName, isSubprocess, message, strict}) => {
-	const wrappedMessage = handleSendStrict({
-		anyProcess,
-		channel,
-		isSubprocess,
-		message,
-		strict,
-	});
-	const outgoingMessagesState = startSendMessage(anyProcess, wrappedMessage, strict);
-	try {
-		await sendOneMessage({
-			anyProcess,
-			methodName,
-			isSubprocess,
-			wrappedMessage,
-			message,
-		});
-	} catch (error) {
-		disconnect(anyProcess);
-		throw error;
-	} finally {
-		endSendMessage(outgoingMessagesState);
-	}
-};
-
-// Used internally by `cancelSignal`
-const sendOneMessage = async ({anyProcess, methodName, isSubprocess, wrappedMessage, message}) => {
-	const sendMethod = getSendMethod(anyProcess);
-
-	try {
-		await Promise.all([
-			waitForStrictResponse(wrappedMessage, anyProcess, isSubprocess),
-			sendMethod(wrappedMessage),
-		]);
-	} catch (error) {
-		handleEpipeError({error, methodName, isSubprocess});
-		handleSerializationError({
-			error,
-			methodName,
-			isSubprocess,
-			message,
-		});
-		throw error;
-	}
-};
-
-// [sub]process.send() promisified, memoized
-const getSendMethod = anyProcess => {
-	if (PROCESS_SEND_METHODS.has(anyProcess)) {
-		return PROCESS_SEND_METHODS.get(anyProcess);
-	}
-
-	const sendMethod = (0,external_node_util_.promisify)(anyProcess.send.bind(anyProcess));
-	PROCESS_SEND_METHODS.set(anyProcess, sendMethod);
-	return sendMethod;
-};
-
-const PROCESS_SEND_METHODS = new WeakMap();
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/graceful.js
-
-
-
-
-
-// Send an IPC message so the subprocess performs a graceful termination
-const sendAbort = (subprocess, message) => {
-	const methodName = 'cancelSignal';
-	validateConnection(methodName, false, subprocess.connected);
-	return sendOneMessage({
-		anyProcess: subprocess,
-		methodName,
-		isSubprocess: false,
-		wrappedMessage: {type: GRACEFUL_CANCEL_TYPE, message},
-		message,
-	});
-};
-
-// When the signal is being used, start listening for incoming messages.
-// Unbuffering messages takes one microtask to complete, so this must be async.
-const getCancelSignal = async ({anyProcess, channel, isSubprocess, ipc}) => {
-	await startIpc({
-		anyProcess,
-		channel,
-		isSubprocess,
-		ipc,
-	});
-	return cancelController.signal;
-};
-
-const startIpc = async ({anyProcess, channel, isSubprocess, ipc}) => {
-	if (cancelListening) {
-		return;
-	}
-
-	cancelListening = true;
-
-	if (!ipc) {
-		throwOnMissingParent();
-		return;
-	}
-
-	if (channel === null) {
-		abortOnDisconnect();
-		return;
-	}
-
-	getIpcEmitter(anyProcess, channel, isSubprocess);
-	await external_node_timers_promises_namespaceObject.scheduler.yield();
-};
-
-let cancelListening = false;
-
-// Reception of IPC message to perform a graceful termination
-const handleAbort = wrappedMessage => {
-	if (wrappedMessage?.type !== GRACEFUL_CANCEL_TYPE) {
-		return false;
-	}
-
-	cancelController.abort(wrappedMessage.message);
-	return true;
-};
-
-const GRACEFUL_CANCEL_TYPE = 'execa:ipc:cancel';
-
-// When the current process disconnects early, the subprocess `cancelSignal` is aborted.
-// Otherwise, the signal would never be able to be aborted later on.
-const abortOnDisconnect = () => {
-	cancelController.abort(getAbortDisconnectError());
-};
-
-const cancelController = new AbortController();
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/graceful.js
-
-
-
-
-// Validate the `gracefulCancel` option
-const validateGracefulCancel = ({gracefulCancel, cancelSignal, ipc, serialization}) => {
-	if (!gracefulCancel) {
-		return;
-	}
-
-	if (cancelSignal === undefined) {
-		throw new Error('The `cancelSignal` option must be defined when setting the `gracefulCancel` option.');
-	}
-
-	if (!ipc) {
-		throw new Error('The `ipc` option cannot be false when setting the `gracefulCancel` option.');
-	}
-
-	if (serialization === 'json') {
-		throw new Error('The `serialization` option cannot be \'json\' when setting the `gracefulCancel` option.');
-	}
-};
-
-// Send abort reason to the subprocess when aborting the `cancelSignal` option and `gracefulCancel` is `true`
-const throwOnGracefulCancel = ({
-	subprocess,
-	cancelSignal,
-	gracefulCancel,
-	forceKillAfterDelay,
-	context,
-	controller,
-}) => gracefulCancel
-	? [sendOnAbort({
-		subprocess,
-		cancelSignal,
-		forceKillAfterDelay,
-		context,
-		controller,
-	})]
-	: [];
-
-const sendOnAbort = async ({subprocess, cancelSignal, forceKillAfterDelay, context, controller: {signal}}) => {
-	await onAbortedSignal(cancelSignal, signal);
-	const reason = getReason(cancelSignal);
-	await sendAbort(subprocess, reason);
-	killOnTimeout({
-		kill: subprocess.kill,
-		forceKillAfterDelay,
-		context,
-		controllerSignal: signal,
-	});
-	context.terminationReason ??= 'gracefulCancel';
-	throw cancelSignal.reason;
-};
-
-// The default `reason` is a DOMException, which is not serializable with V8
-// See https://github.com/nodejs/node/issues/53225
-const getReason = ({reason}) => {
-	if (!(reason instanceof DOMException)) {
-		return reason;
-	}
-
-	const error = new Error(reason.message);
-	Object.defineProperty(error, 'stack', {
-		value: reason.stack,
-		enumerable: false,
-		configurable: true,
-		writable: true,
-	});
-	return error;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/timeout.js
-
-
-
-// Validate `timeout` option
-const timeout_validateTimeout = ({timeout}) => {
-	if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
-		throw new TypeError(`Expected the \`timeout\` option to be a non-negative integer, got \`${timeout}\` (${typeof timeout})`);
-	}
-};
-
-// Fails when the `timeout` option is exceeded
-const throwOnTimeout = (subprocess, timeout, context, controller) => timeout === 0 || timeout === undefined
-	? []
-	: [killAfterTimeout(subprocess, timeout, context, controller)];
-
-const killAfterTimeout = async (subprocess, timeout, context, {signal}) => {
-	await (0,external_node_timers_promises_namespaceObject.setTimeout)(timeout, undefined, {signal});
-	context.terminationReason ??= 'timeout';
-	subprocess.kill();
-	throw new DiscardedError();
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/node.js
-
-
-
-
-// `execaNode()` is a shortcut for `execa(..., {node: true})`
-const mapNode = ({options}) => {
-	if (options.node === false) {
-		throw new TypeError('The "node" option cannot be false with `execaNode()`.');
-	}
-
-	return {options: {...options, node: true}};
-};
-
-// Applies the `node: true` option, and the related `nodePath`/`nodeOptions` options.
-// Modifies the file commands/arguments to ensure the same Node binary and flags are re-used.
-// Also adds `ipc: true` and `shell: false`.
-const handleNodeOption = (file, commandArguments, {
-	node: shouldHandleNode = false,
-	nodePath = external_node_process_namespaceObject.execPath,
-	nodeOptions = external_node_process_namespaceObject.execArgv.filter(nodeOption => !nodeOption.startsWith('--inspect')),
-	cwd,
-	execPath: formerNodePath,
-	...options
-}) => {
-	if (formerNodePath !== undefined) {
-		throw new TypeError('The "execPath" option has been removed. Please use the "nodePath" option instead.');
-	}
-
-	const normalizedNodePath = safeNormalizeFileUrl(nodePath, 'The "nodePath" option');
-	const resolvedNodePath = external_node_path_namespaceObject.resolve(cwd, normalizedNodePath);
-	const newOptions = {
-		...options,
-		nodePath: resolvedNodePath,
-		node: shouldHandleNode,
-		cwd,
-	};
-
-	if (!shouldHandleNode) {
-		return [file, commandArguments, newOptions];
-	}
-
-	if (external_node_path_namespaceObject.basename(file, '.exe') === 'node') {
-		throw new TypeError('When the "node" option is true, the first argument does not need to be "node".');
-	}
-
-	return [
-		resolvedNodePath,
-		[...nodeOptions, file, ...commandArguments],
-		{ipc: true, ...newOptions, shell: false},
-	];
-};
-
-;// CONCATENATED MODULE: external "node:v8"
-const external_node_v8_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:v8");
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/ipc-input.js
-
-
-// Validate the `ipcInput` option
-const validateIpcInputOption = ({ipcInput, ipc, serialization}) => {
-	if (ipcInput === undefined) {
-		return;
-	}
-
-	if (!ipc) {
-		throw new Error('The `ipcInput` option cannot be set unless the `ipc` option is `true`.');
-	}
-
-	validateIpcInput[serialization](ipcInput);
-};
-
-const validateAdvancedInput = ipcInput => {
-	try {
-		(0,external_node_v8_namespaceObject.serialize)(ipcInput);
-	} catch (error) {
-		throw new Error('The `ipcInput` option is not serializable with a structured clone.', {cause: error});
-	}
-};
-
-const validateJsonInput = ipcInput => {
-	try {
-		JSON.stringify(ipcInput);
-	} catch (error) {
-		throw new Error('The `ipcInput` option is not serializable with JSON.', {cause: error});
-	}
-};
-
-const validateIpcInput = {
-	advanced: validateAdvancedInput,
-	json: validateJsonInput,
-};
-
-// When the `ipcInput` option is set, it is sent as an initial IPC message to the subprocess
-const sendIpcInput = async (subprocess, ipcInput) => {
-	if (ipcInput === undefined) {
-		return;
-	}
-
-	await subprocess.sendMessage(ipcInput);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/encoding-option.js
-// Validate `encoding` option
-const validateEncoding = ({encoding}) => {
-	if (ENCODINGS.has(encoding)) {
-		return;
-	}
-
-	const correctEncoding = getCorrectEncoding(encoding);
-	if (correctEncoding !== undefined) {
-		throw new TypeError(`Invalid option \`encoding: ${serializeEncoding(encoding)}\`.
-Please rename it to ${serializeEncoding(correctEncoding)}.`);
-	}
-
-	const correctEncodings = [...ENCODINGS].map(correctEncoding => serializeEncoding(correctEncoding)).join(', ');
-	throw new TypeError(`Invalid option \`encoding: ${serializeEncoding(encoding)}\`.
-Please rename it to one of: ${correctEncodings}.`);
-};
-
-const TEXT_ENCODINGS = new Set(['utf8', 'utf16le']);
-const BINARY_ENCODINGS = new Set(['buffer', 'hex', 'base64', 'base64url', 'latin1', 'ascii']);
-const ENCODINGS = new Set([...TEXT_ENCODINGS, ...BINARY_ENCODINGS]);
-
-const getCorrectEncoding = encoding => {
-	if (encoding === null) {
-		return 'buffer';
-	}
-
-	if (typeof encoding !== 'string') {
-		return;
-	}
-
-	const lowerEncoding = encoding.toLowerCase();
-	if (lowerEncoding in ENCODING_ALIASES) {
-		return ENCODING_ALIASES[lowerEncoding];
-	}
-
-	if (ENCODINGS.has(lowerEncoding)) {
-		return lowerEncoding;
-	}
-};
-
-const ENCODING_ALIASES = {
-	// eslint-disable-next-line unicorn/text-encoding-identifier-case
-	'utf-8': 'utf8',
-	'utf-16le': 'utf16le',
-	'ucs-2': 'utf16le',
-	ucs2: 'utf16le',
-	binary: 'latin1',
-};
-
-const serializeEncoding = encoding => typeof encoding === 'string' ? `"${encoding}"` : String(encoding);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/cwd.js
-
-
-
-
-
-// Normalize `cwd` option
-const normalizeCwd = (cwd = getDefaultCwd()) => {
-	const cwdString = safeNormalizeFileUrl(cwd, 'The "cwd" option');
-	return external_node_path_namespaceObject.resolve(cwdString);
-};
-
-const getDefaultCwd = () => {
-	try {
-		return external_node_process_namespaceObject.cwd();
-	} catch (error) {
-		error.message = `The current directory does not exist.\n${error.message}`;
-		throw error;
-	}
-};
-
-// When `cwd` option has an invalid value, provide with a better error message
-const fixCwdError = (originalMessage, cwd) => {
-	if (cwd === getDefaultCwd()) {
-		return originalMessage;
-	}
-
-	let cwdStat;
-	try {
-		cwdStat = (0,external_node_fs_namespaceObject.statSync)(cwd);
-	} catch (error) {
-		return `The "cwd" option is invalid: ${cwd}.\n${error.message}\n${originalMessage}`;
-	}
-
-	if (!cwdStat.isDirectory()) {
-		return `The "cwd" option is not a directory: ${cwd}.\n${originalMessage}`;
-	}
-
-	return originalMessage;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/options.js
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Normalize the options object, and sometimes also the file paths and arguments.
-// Applies default values, validate allowed options, normalize them.
-const options_normalizeOptions = (filePath, rawArguments, rawOptions) => {
-	rawOptions.cwd = normalizeCwd(rawOptions.cwd);
-	const [processedFile, processedArguments, processedOptions] = handleNodeOption(filePath, rawArguments, rawOptions);
-
-	const {command: file, args: commandArguments, options: initialOptions} = node_modules_cross_spawn._parse(processedFile, processedArguments, processedOptions);
-
-	const fdOptions = normalizeFdSpecificOptions(initialOptions);
-	const options = addDefaultOptions(fdOptions);
-	timeout_validateTimeout(options);
-	validateEncoding(options);
-	validateIpcInputOption(options);
-	validateCancelSignal(options);
-	validateGracefulCancel(options);
-	options.shell = normalizeFileUrl(options.shell);
-	options.env = options_getEnv(options);
-	options.killSignal = normalizeKillSignal(options.killSignal);
-	options.forceKillAfterDelay = normalizeForceKillAfterDelay(options.forceKillAfterDelay);
-	options.lines = options.lines.map((lines, fdNumber) => lines && !BINARY_ENCODINGS.has(options.encoding) && options.buffer[fdNumber]);
-
-	if (external_node_process_namespaceObject.platform === 'win32' && external_node_path_namespaceObject.basename(file, '.exe') === 'cmd') {
-		// #116
-		commandArguments.unshift('/q');
-	}
-
-	return {file, commandArguments, options};
-};
-
-const addDefaultOptions = ({
-	extendEnv = true,
-	preferLocal = false,
-	cwd,
-	localDir: localDirectory = cwd,
-	encoding = 'utf8',
-	reject = true,
-	cleanup = true,
-	all = false,
-	windowsHide = true,
-	killSignal = 'SIGTERM',
-	forceKillAfterDelay = true,
-	gracefulCancel = false,
-	ipcInput,
-	ipc = ipcInput !== undefined || gracefulCancel,
-	serialization = 'advanced',
-	...options
-}) => ({
-	...options,
-	extendEnv,
-	preferLocal,
-	cwd,
-	localDirectory,
-	encoding,
-	reject,
-	cleanup,
-	all,
-	windowsHide,
-	killSignal,
-	forceKillAfterDelay,
-	gracefulCancel,
-	ipcInput,
-	ipc,
-	serialization,
-});
-
-const options_getEnv = ({env: envOption, extendEnv, preferLocal, node, localDirectory, nodePath}) => {
-	const env = extendEnv ? {...external_node_process_namespaceObject.env, ...envOption} : envOption;
-
-	if (preferLocal || node) {
-		return npm_run_path_npmRunPathEnv({
-			env,
-			cwd: localDirectory,
-			execPath: nodePath,
-			preferLocal,
-			addExecPath: node,
-		});
-	}
-
-	return env;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/arguments/shell.js
-// When the `shell` option is set, any command argument is concatenated as a single string by Node.js:
-// https://github.com/nodejs/node/blob/e38ce27f3ca0a65f68a31cedd984cddb927d4002/lib/child_process.js#L614-L624
-// However, since Node 24, it also prints a deprecation warning.
-// To avoid this warning, we perform that same operation before calling `node:child_process`.
-// Shells only understand strings, which is why Node.js performs that concatenation.
-// However, we rely on users splitting command arguments as an array.
-// For example, this allows us to easily detect which arguments are passed.
-// So we do want users to pass array of arguments even with `shell: true`, but we also want to avoid any warning.
-const concatenateShell = (file, commandArguments, options) => options.shell && commandArguments.length > 0
-	? [[file, ...commandArguments].join(' '), [], options]
-	: [file, commandArguments, options];
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/strip-final-newline/index.js
-function strip_final_newline_stripFinalNewline(input) {
-	if (typeof input === 'string') {
-		return stripFinalNewlineString(input);
-	}
-
-	if (!(ArrayBuffer.isView(input) && input.BYTES_PER_ELEMENT === 1)) {
-		throw new Error('Input must be a string or a Uint8Array');
-	}
-
-	return stripFinalNewlineBinary(input);
-}
-
-const stripFinalNewlineString = input =>
-	input.at(-1) === LF
-		? input.slice(0, input.at(-2) === CR ? -2 : -1)
-		: input;
-
-const stripFinalNewlineBinary = input =>
-	input.at(-1) === LF_BINARY
-		? input.subarray(0, input.at(-2) === CR_BINARY ? -2 : -1)
-		: input;
-
-const LF = '\n';
-const LF_BINARY = LF.codePointAt(0);
-const CR = '\r';
-const CR_BINARY = CR.codePointAt(0);
-
-;// CONCATENATED MODULE: ./node_modules/is-stream/index.js
-function is_stream_isStream(stream, {checkOpen = true} = {}) {
-	return stream !== null
-		&& typeof stream === 'object'
-		&& (stream.writable || stream.readable || !checkOpen || (stream.writable === undefined && stream.readable === undefined))
-		&& typeof stream.pipe === 'function';
-}
-
-function is_stream_isWritableStream(stream, {checkOpen = true} = {}) {
-	return is_stream_isStream(stream, {checkOpen})
-		&& (stream.writable || !checkOpen)
-		&& typeof stream.write === 'function'
-		&& typeof stream.end === 'function'
-		&& typeof stream.writable === 'boolean'
-		&& typeof stream.writableObjectMode === 'boolean'
-		&& typeof stream.destroy === 'function'
-		&& typeof stream.destroyed === 'boolean';
-}
-
-function is_stream_isReadableStream(stream, {checkOpen = true} = {}) {
-	return is_stream_isStream(stream, {checkOpen})
-		&& (stream.readable || !checkOpen)
-		&& typeof stream.read === 'function'
-		&& typeof stream.readable === 'boolean'
-		&& typeof stream.readableObjectMode === 'boolean'
-		&& typeof stream.destroy === 'function'
-		&& typeof stream.destroyed === 'boolean';
-}
-
-function is_stream_isDuplexStream(stream, options) {
-	return is_stream_isWritableStream(stream, options)
-		&& is_stream_isReadableStream(stream, options);
-}
-
-function is_stream_isTransformStream(stream, options) {
-	return is_stream_isDuplexStream(stream, options)
-		&& typeof stream._transform === 'function';
-}
-
-;// CONCATENATED MODULE: ./node_modules/@sec-ant/readable-stream/dist/ponyfill/asyncIterator.js
-const a = Object.getPrototypeOf(
-  Object.getPrototypeOf(
-    /* istanbul ignore next */
-    async function* () {
-    }
-  ).prototype
-);
-class c {
-  #t;
-  #n;
-  #r = !1;
-  #e = void 0;
-  constructor(e, t) {
-    this.#t = e, this.#n = t;
-  }
-  next() {
-    const e = () => this.#s();
-    return this.#e = this.#e ? this.#e.then(e, e) : e(), this.#e;
-  }
-  return(e) {
-    const t = () => this.#i(e);
-    return this.#e ? this.#e.then(t, t) : t();
-  }
-  async #s() {
-    if (this.#r)
-      return {
-        done: !0,
-        value: void 0
-      };
-    let e;
-    try {
-      e = await this.#t.read();
-    } catch (t) {
-      throw this.#e = void 0, this.#r = !0, this.#t.releaseLock(), t;
-    }
-    return e.done && (this.#e = void 0, this.#r = !0, this.#t.releaseLock()), e;
-  }
-  async #i(e) {
-    if (this.#r)
-      return {
-        done: !0,
-        value: e
-      };
-    if (this.#r = !0, !this.#n) {
-      const t = this.#t.cancel(e);
-      return this.#t.releaseLock(), await t, {
-        done: !0,
-        value: e
-      };
-    }
-    return this.#t.releaseLock(), {
-      done: !0,
-      value: e
-    };
-  }
-}
-const n = Symbol();
-function i() {
-  return this[n].next();
-}
-Object.defineProperty(i, "name", { value: "next" });
-function o(r) {
-  return this[n].return(r);
-}
-Object.defineProperty(o, "name", { value: "return" });
-const u = Object.create(a, {
-  next: {
-    enumerable: !0,
-    configurable: !0,
-    writable: !0,
-    value: i
-  },
-  return: {
-    enumerable: !0,
-    configurable: !0,
-    writable: !0,
-    value: o
-  }
-});
-function h({ preventCancel: r = !1 } = {}) {
-  const e = this.getReader(), t = new c(
-    e,
-    r
-  ), s = Object.create(u);
-  return s[n] = t, s;
-}
-
-
-;// CONCATENATED MODULE: ./node_modules/@sec-ant/readable-stream/dist/ponyfill/index.js
-
-
-
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/stream.js
-
-
-
-const getAsyncIterable = stream => {
-	if (is_stream_isReadableStream(stream, {checkOpen: false}) && nodeImports.on !== undefined) {
-		return getStreamIterable(stream);
-	}
-
-	if (typeof stream?.[Symbol.asyncIterator] === 'function') {
-		return stream;
-	}
-
-	// `ReadableStream[Symbol.asyncIterator]` support is missing in multiple browsers, so we ponyfill it
-	if (stream_toString.call(stream) === '[object ReadableStream]') {
-		return h.call(stream);
-	}
-
-	throw new TypeError('The first argument must be a Readable, a ReadableStream, or an async iterable.');
-};
-
-const {toString: stream_toString} = Object.prototype;
-
-// The default iterable for Node.js streams does not allow for multiple readers at once, so we re-implement it
-const getStreamIterable = async function * (stream) {
-	const controller = new AbortController();
-	const state = {};
-	handleStreamEnd(stream, controller, state);
-
-	try {
-		for await (const [chunk] of nodeImports.on(stream, 'data', {signal: controller.signal})) {
-			yield chunk;
-		}
-	} catch (error) {
-		// Stream failure, for example due to `stream.destroy(error)`
-		if (state.error !== undefined) {
-			throw state.error;
-		// `error` event directly emitted on stream
-		} else if (!controller.signal.aborted) {
-			throw error;
-		// Otherwise, stream completed successfully
-		}
-		// The `finally` block also runs when the caller throws, for example due to the `maxBuffer` option
-	} finally {
-		stream.destroy();
-	}
-};
-
-const handleStreamEnd = async (stream, controller, state) => {
-	try {
-		await nodeImports.finished(stream, {
-			cleanup: true,
-			readable: true,
-			writable: false,
-			error: false,
-		});
-	} catch (error) {
-		state.error = error;
-	} finally {
-		controller.abort();
-	}
-};
-
-// Loaded by the Node entrypoint, but not by the browser one.
-// This prevents using dynamic imports.
-const nodeImports = {};
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/contents.js
-
-
-const source_contents_getStreamContents = async (stream, {init, convertChunk, getSize, truncateChunk, addChunk, getFinalChunk, finalize}, {maxBuffer = Number.POSITIVE_INFINITY} = {}) => {
-	const asyncIterable = getAsyncIterable(stream);
-
-	const state = init();
-	state.length = 0;
-
-	try {
-		for await (const chunk of asyncIterable) {
-			const chunkType = contents_getChunkType(chunk);
-			const convertedChunk = convertChunk[chunkType](chunk, state);
-			contents_appendChunk({
-				convertedChunk,
-				state,
-				getSize,
-				truncateChunk,
-				addChunk,
-				maxBuffer,
-			});
-		}
-
-		contents_appendFinalChunk({
-			state,
-			convertChunk,
-			getSize,
-			truncateChunk,
-			addChunk,
-			getFinalChunk,
-			maxBuffer,
-		});
-		return finalize(state);
-	} catch (error) {
-		const normalizedError = typeof error === 'object' && error !== null ? error : new Error(error);
-		normalizedError.bufferedData = finalize(state);
-		throw normalizedError;
-	}
-};
-
-const contents_appendFinalChunk = ({state, getSize, truncateChunk, addChunk, getFinalChunk, maxBuffer}) => {
-	const convertedChunk = getFinalChunk(state);
-	if (convertedChunk !== undefined) {
-		contents_appendChunk({
-			convertedChunk,
-			state,
-			getSize,
-			truncateChunk,
-			addChunk,
-			maxBuffer,
-		});
-	}
-};
-
-const contents_appendChunk = ({convertedChunk, state, getSize, truncateChunk, addChunk, maxBuffer}) => {
-	const chunkSize = getSize(convertedChunk);
-	const newLength = state.length + chunkSize;
-
-	if (newLength <= maxBuffer) {
-		contents_addNewChunk(convertedChunk, state, addChunk, newLength);
-		return;
-	}
-
-	const truncatedChunk = truncateChunk(convertedChunk, maxBuffer - state.length);
-
-	if (truncatedChunk !== undefined) {
-		contents_addNewChunk(truncatedChunk, state, addChunk, maxBuffer);
-	}
-
-	throw new contents_MaxBufferError();
-};
-
-const contents_addNewChunk = (convertedChunk, state, addChunk, newLength) => {
-	state.contents = addChunk(convertedChunk, state, newLength);
-	state.length = newLength;
-};
-
-const contents_getChunkType = chunk => {
-	const typeOfChunk = typeof chunk;
-
-	if (typeOfChunk === 'string') {
-		return 'string';
-	}
-
-	if (typeOfChunk !== 'object' || chunk === null) {
-		return 'others';
-	}
-
-	if (globalThis.Buffer?.isBuffer(chunk)) {
-		return 'buffer';
-	}
-
-	const prototypeName = source_contents_objectToString.call(chunk);
-
-	if (prototypeName === '[object ArrayBuffer]') {
-		return 'arrayBuffer';
-	}
-
-	if (prototypeName === '[object DataView]') {
-		return 'dataView';
-	}
-
-	if (
-		Number.isInteger(chunk.byteLength)
-		&& Number.isInteger(chunk.byteOffset)
-		&& source_contents_objectToString.call(chunk.buffer) === '[object ArrayBuffer]'
-	) {
-		return 'typedArray';
-	}
-
-	return 'others';
-};
-
-const {toString: source_contents_objectToString} = Object.prototype;
-
-class contents_MaxBufferError extends Error {
-	name = 'MaxBufferError';
-
-	constructor() {
-		super('maxBuffer exceeded');
-	}
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/max-buffer.js
-
-
-
-
-// When the `maxBuffer` option is hit, a MaxBufferError is thrown.
-// The stream is aborted, then specific information is kept for the error message.
-const handleMaxBuffer = ({error, stream, readableObjectMode, lines, encoding, fdNumber}) => {
-	if (!(error instanceof contents_MaxBufferError)) {
-		throw error;
-	}
-
-	if (fdNumber === 'all') {
-		return error;
-	}
-
-	const unit = getMaxBufferUnit(readableObjectMode, lines, encoding);
-	error.maxBufferInfo = {fdNumber, unit};
-	stream.destroy();
-	throw error;
-};
-
-const getMaxBufferUnit = (readableObjectMode, lines, encoding) => {
-	if (readableObjectMode) {
-		return 'objects';
-	}
-
-	if (lines) {
-		return 'lines';
-	}
-
-	if (encoding === 'buffer') {
-		return 'bytes';
-	}
-
-	return 'characters';
-};
-
-// Check the `maxBuffer` option with `result.ipcOutput`
-const checkIpcMaxBuffer = (subprocess, ipcOutput, maxBuffer) => {
-	if (ipcOutput.length !== maxBuffer) {
-		return;
-	}
-
-	const error = new contents_MaxBufferError();
-	error.maxBufferInfo = {fdNumber: 'ipc'};
-	throw error;
-};
-
-// Error message when `maxBuffer` is hit
-const getMaxBufferMessage = (error, maxBuffer) => {
-	const {streamName, threshold, unit} = getMaxBufferInfo(error, maxBuffer);
-	return `Command's ${streamName} was larger than ${threshold} ${unit}`;
-};
-
-const getMaxBufferInfo = (error, maxBuffer) => {
-	if (error?.maxBufferInfo === undefined) {
-		return {streamName: 'output', threshold: maxBuffer[1], unit: 'bytes'};
-	}
-
-	const {maxBufferInfo: {fdNumber, unit}} = error;
-	delete error.maxBufferInfo;
-
-	const threshold = getFdSpecificValue(maxBuffer, fdNumber);
-	if (fdNumber === 'ipc') {
-		return {streamName: 'IPC output', threshold, unit: 'messages'};
-	}
-
-	return {streamName: getStreamName(fdNumber), threshold, unit};
-};
-
-// The only way to apply `maxBuffer` with `spawnSync()` is to use the native `maxBuffer` option Node.js provides.
-// However, this has multiple limitations, and cannot behave the exact same way as the async behavior.
-// When the `maxBuffer` is hit, a `ENOBUFS` error is thrown.
-const isMaxBufferSync = (resultError, output, maxBuffer) => resultError?.code === 'ENOBUFS'
-	&& output !== null
-	&& output.some(result => result !== null && result.length > getMaxBufferSync(maxBuffer));
-
-// When `maxBuffer` is hit, ensure the result is truncated
-const truncateMaxBufferSync = (result, isMaxBuffer, maxBuffer) => {
-	if (!isMaxBuffer) {
-		return result;
-	}
-
-	const maxBufferValue = getMaxBufferSync(maxBuffer);
-	return result.length > maxBufferValue ? result.slice(0, maxBufferValue) : result;
-};
-
-// `spawnSync()` does not allow differentiating `maxBuffer` per file descriptor, so we always use `stdout`
-const getMaxBufferSync = ([, stdoutMaxBuffer]) => stdoutMaxBuffer;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/message.js
-
-
-
-
-
-
-
-
-
-// Computes `error.message`, `error.shortMessage` and `error.originalMessage`
-const createMessages = ({
-	stdio,
-	all,
-	ipcOutput,
-	originalError,
-	signal,
-	signalDescription,
-	exitCode,
-	escapedCommand,
-	timedOut,
-	isCanceled,
-	isGracefullyCanceled,
-	isMaxBuffer,
-	isForcefullyTerminated,
-	forceKillAfterDelay,
-	killSignal,
-	maxBuffer,
-	timeout,
-	cwd,
-}) => {
-	const errorCode = originalError?.code;
-	const prefix = message_getErrorPrefix({
-		originalError,
-		timedOut,
-		timeout,
-		isMaxBuffer,
-		maxBuffer,
-		errorCode,
-		signal,
-		signalDescription,
-		exitCode,
-		isCanceled,
-		isGracefullyCanceled,
-		isForcefullyTerminated,
-		forceKillAfterDelay,
-		killSignal,
-	});
-	const originalMessage = getOriginalMessage(originalError, cwd);
-	const suffix = originalMessage === undefined ? '' : `\n${originalMessage}`;
-	const shortMessage = `${prefix}: ${escapedCommand}${suffix}`;
-	const messageStdio = all === undefined ? [stdio[2], stdio[1]] : [all];
-	const message = [
-		shortMessage,
-		...messageStdio,
-		...stdio.slice(3),
-		ipcOutput.map(ipcMessage => serializeIpcMessage(ipcMessage)).join('\n'),
-	]
-		.map(messagePart => escapeLines(strip_final_newline_stripFinalNewline(serializeMessagePart(messagePart))))
-		.filter(Boolean)
-		.join('\n\n');
-	return {originalMessage, shortMessage, message};
-};
-
-const message_getErrorPrefix = ({
-	originalError,
-	timedOut,
-	timeout,
-	isMaxBuffer,
-	maxBuffer,
-	errorCode,
-	signal,
-	signalDescription,
-	exitCode,
-	isCanceled,
-	isGracefullyCanceled,
-	isForcefullyTerminated,
-	forceKillAfterDelay,
-	killSignal,
-}) => {
-	const forcefulSuffix = getForcefulSuffix(isForcefullyTerminated, forceKillAfterDelay);
-
-	if (timedOut) {
-		return `Command timed out after ${timeout} milliseconds${forcefulSuffix}`;
-	}
-
-	if (isGracefullyCanceled) {
-		if (signal === undefined) {
-			return `Command was gracefully canceled with exit code ${exitCode}`;
-		}
-
-		return isForcefullyTerminated
-			? `Command was gracefully canceled${forcefulSuffix}`
-			: `Command was gracefully canceled with ${signal} (${signalDescription})`;
-	}
-
-	if (isCanceled) {
-		return `Command was canceled${forcefulSuffix}`;
-	}
-
-	if (isMaxBuffer) {
-		return `${getMaxBufferMessage(originalError, maxBuffer)}${forcefulSuffix}`;
-	}
-
-	if (errorCode !== undefined) {
-		return `Command failed with ${errorCode}${forcefulSuffix}`;
-	}
-
-	if (isForcefullyTerminated) {
-		return `Command was killed with ${killSignal} (${getSignalDescription(killSignal)})${forcefulSuffix}`;
-	}
-
-	if (signal !== undefined) {
-		return `Command was killed with ${signal} (${signalDescription})`;
-	}
-
-	if (exitCode !== undefined) {
-		return `Command failed with exit code ${exitCode}`;
-	}
-
-	return 'Command failed';
-};
-
-const getForcefulSuffix = (isForcefullyTerminated, forceKillAfterDelay) => isForcefullyTerminated
-	? ` and was forcefully terminated after ${forceKillAfterDelay} milliseconds`
-	: '';
-
-const getOriginalMessage = (originalError, cwd) => {
-	if (originalError instanceof DiscardedError) {
-		return;
-	}
-
-	const originalMessage = isExecaError(originalError)
-		? originalError.originalMessage
-		: String(originalError?.message ?? originalError);
-	const escapedOriginalMessage = escapeLines(fixCwdError(originalMessage, cwd));
-	return escapedOriginalMessage === '' ? undefined : escapedOriginalMessage;
-};
-
-const serializeIpcMessage = ipcMessage => typeof ipcMessage === 'string'
-	? ipcMessage
-	: (0,external_node_util_.inspect)(ipcMessage);
-
-const serializeMessagePart = messagePart => Array.isArray(messagePart)
-	? messagePart.map(messageItem => strip_final_newline_stripFinalNewline(serializeMessageItem(messageItem))).filter(Boolean).join('\n')
-	: serializeMessageItem(messagePart);
-
-const serializeMessageItem = messageItem => {
-	if (typeof messageItem === 'string') {
-		return messageItem;
-	}
-
-	if (uint_array_isUint8Array(messageItem)) {
-		return uint_array_uint8ArrayToString(messageItem);
-	}
-
-	return '';
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/result.js
-
-
-
-
-
-// Object returned on subprocess success
-const makeSuccessResult = ({
-	command,
-	escapedCommand,
-	stdio,
-	all,
-	ipcOutput,
-	options: {cwd},
-	startTime,
-}) => omitUndefinedProperties({
-	command,
-	escapedCommand,
-	cwd,
-	durationMs: getDurationMs(startTime),
-	failed: false,
-	timedOut: false,
-	isCanceled: false,
-	isGracefullyCanceled: false,
-	isTerminated: false,
-	isMaxBuffer: false,
-	isForcefullyTerminated: false,
-	exitCode: 0,
-	stdout: stdio[1],
-	stderr: stdio[2],
-	all,
-	stdio,
-	ipcOutput,
-	pipedFrom: [],
-});
-
-// Object returned on subprocess failure before spawning
-const makeEarlyError = ({
-	error,
-	command,
-	escapedCommand,
-	fileDescriptors,
-	options,
-	startTime,
-	isSync,
-}) => result_makeError({
-	error,
-	command,
-	escapedCommand,
-	startTime,
-	timedOut: false,
-	isCanceled: false,
-	isGracefullyCanceled: false,
-	isMaxBuffer: false,
-	isForcefullyTerminated: false,
-	stdio: Array.from({length: fileDescriptors.length}),
-	ipcOutput: [],
-	options,
-	isSync,
-});
-
-// Object returned on subprocess failure
-const result_makeError = ({
-	error: originalError,
-	command,
-	escapedCommand,
-	startTime,
-	timedOut,
-	isCanceled,
-	isGracefullyCanceled,
-	isMaxBuffer,
-	isForcefullyTerminated,
-	exitCode: rawExitCode,
-	signal: rawSignal,
-	stdio,
-	all,
-	ipcOutput,
-	options: {
-		timeoutDuration,
-		timeout = timeoutDuration,
-		forceKillAfterDelay,
-		killSignal,
-		cwd,
-		maxBuffer,
-	},
-	isSync,
-}) => {
-	const {exitCode, signal, signalDescription} = normalizeExitPayload(rawExitCode, rawSignal);
-	const {originalMessage, shortMessage, message} = createMessages({
-		stdio,
-		all,
-		ipcOutput,
-		originalError,
-		signal,
-		signalDescription,
-		exitCode,
-		escapedCommand,
-		timedOut,
-		isCanceled,
-		isGracefullyCanceled,
-		isMaxBuffer,
-		isForcefullyTerminated,
-		forceKillAfterDelay,
-		killSignal,
-		maxBuffer,
-		timeout,
-		cwd,
-	});
-	const error = getFinalError(originalError, message, isSync);
-	Object.assign(error, getErrorProperties({
-		error,
-		command,
-		escapedCommand,
-		startTime,
-		timedOut,
-		isCanceled,
-		isGracefullyCanceled,
-		isMaxBuffer,
-		isForcefullyTerminated,
-		exitCode,
-		signal,
-		signalDescription,
-		stdio,
-		all,
-		ipcOutput,
-		cwd,
-		originalMessage,
-		shortMessage,
-	}));
-	return error;
-};
-
-const getErrorProperties = ({
-	error,
-	command,
-	escapedCommand,
-	startTime,
-	timedOut,
-	isCanceled,
-	isGracefullyCanceled,
-	isMaxBuffer,
-	isForcefullyTerminated,
-	exitCode,
-	signal,
-	signalDescription,
-	stdio,
-	all,
-	ipcOutput,
-	cwd,
-	originalMessage,
-	shortMessage,
-}) => omitUndefinedProperties({
-	shortMessage,
-	originalMessage,
-	command,
-	escapedCommand,
-	cwd,
-	durationMs: getDurationMs(startTime),
-	failed: true,
-	timedOut,
-	isCanceled,
-	isGracefullyCanceled,
-	isTerminated: signal !== undefined,
-	isMaxBuffer,
-	isForcefullyTerminated,
-	exitCode,
-	signal,
-	signalDescription,
-	code: error.cause?.code,
-	stdout: stdio[1],
-	stderr: stdio[2],
-	all,
-	stdio,
-	ipcOutput,
-	pipedFrom: [],
-});
-
-const omitUndefinedProperties = result => Object.fromEntries(Object.entries(result).filter(([, value]) => value !== undefined));
-
-// `signal` and `exitCode` emitted on `subprocess.on('exit')` event can be `null`.
-// We normalize them to `undefined`
-const normalizeExitPayload = (rawExitCode, rawSignal) => {
-	const exitCode = rawExitCode === null ? undefined : rawExitCode;
-	const signal = rawSignal === null ? undefined : rawSignal;
-	const signalDescription = signal === undefined ? undefined : getSignalDescription(rawSignal);
-	return {exitCode, signal, signalDescription};
-};
-
-;// CONCATENATED MODULE: ./node_modules/parse-ms/index.js
-const toZeroIfInfinity = value => Number.isFinite(value) ? value : 0;
-
-function parseNumber(milliseconds) {
-	return {
-		days: Math.trunc(milliseconds / 86_400_000),
-		hours: Math.trunc(milliseconds / 3_600_000 % 24),
-		minutes: Math.trunc(milliseconds / 60_000 % 60),
-		seconds: Math.trunc(milliseconds / 1000 % 60),
-		milliseconds: Math.trunc(milliseconds % 1000),
-		microseconds: Math.trunc(toZeroIfInfinity(milliseconds * 1000) % 1000),
-		nanoseconds: Math.trunc(toZeroIfInfinity(milliseconds * 1e6) % 1000),
-	};
-}
-
-function parseBigint(milliseconds) {
-	return {
-		days: milliseconds / 86_400_000n,
-		hours: milliseconds / 3_600_000n % 24n,
-		minutes: milliseconds / 60_000n % 60n,
-		seconds: milliseconds / 1000n % 60n,
-		milliseconds: milliseconds % 1000n,
-		microseconds: 0n,
-		nanoseconds: 0n,
-	};
-}
-
-function parseMilliseconds(milliseconds) {
-	switch (typeof milliseconds) {
-		case 'number': {
-			if (Number.isFinite(milliseconds)) {
-				return parseNumber(milliseconds);
-			}
-
-			break;
-		}
-
-		case 'bigint': {
-			return parseBigint(milliseconds);
-		}
-
-		// No default
-	}
-
-	throw new TypeError('Expected a finite number or bigint');
-}
-
-;// CONCATENATED MODULE: ./node_modules/pretty-ms/index.js
-
-
-const isZero = value => value === 0 || value === 0n;
-const pluralize = (word, count) => (count === 1 || count === 1n) ? word : `${word}s`;
-
-const SECOND_ROUNDING_EPSILON = 0.000_000_1;
-const ONE_DAY_IN_MILLISECONDS = 24n * 60n * 60n * 1000n;
-
-function prettyMilliseconds(milliseconds, options) {
-	const isBigInt = typeof milliseconds === 'bigint';
-	if (!isBigInt && !Number.isFinite(milliseconds)) {
-		throw new TypeError('Expected a finite number or bigint');
-	}
-
-	options = {...options};
-
-	const sign = milliseconds < 0 ? '-' : '';
-	milliseconds = milliseconds < 0 ? -milliseconds : milliseconds; // Cannot use `Math.abs()` because of BigInt support.
-
-	if (options.colonNotation) {
-		options.compact = false;
-		options.formatSubMilliseconds = false;
-		options.separateMilliseconds = false;
-		options.verbose = false;
-	}
-
-	if (options.compact) {
-		options.unitCount = 1;
-		options.secondsDecimalDigits = 0;
-		options.millisecondsDecimalDigits = 0;
-	}
-
-	let result = [];
-
-	const floorDecimals = (value, decimalDigits) => {
-		const flooredInterimValue = Math.floor((value * (10 ** decimalDigits)) + SECOND_ROUNDING_EPSILON);
-		const flooredValue = Math.round(flooredInterimValue) / (10 ** decimalDigits);
-		return flooredValue.toFixed(decimalDigits);
-	};
-
-	const add = (value, long, short, valueString) => {
-		if (
-			(result.length === 0 || !options.colonNotation)
-			&& isZero(value)
-			&& !(options.colonNotation && short === 'm')) {
-			return;
-		}
-
-		valueString ??= String(value);
-		if (options.colonNotation) {
-			const wholeDigits = valueString.includes('.') ? valueString.split('.')[0].length : valueString.length;
-			const minLength = result.length > 0 ? 2 : 1;
-			valueString = '0'.repeat(Math.max(0, minLength - wholeDigits)) + valueString;
-		} else {
-			valueString += options.verbose ? ' ' + pluralize(long, value) : short;
-		}
-
-		result.push(valueString);
-	};
-
-	const parsed = parseMilliseconds(milliseconds);
-	const days = BigInt(parsed.days);
-
-	if (options.hideYearAndDays) {
-		add((BigInt(days) * 24n) + BigInt(parsed.hours), 'hour', 'h');
-	} else {
-		if (options.hideYear) {
-			add(days, 'day', 'd');
-		} else {
-			add(days / 365n, 'year', 'y');
-			add(days % 365n, 'day', 'd');
-		}
-
-		add(Number(parsed.hours), 'hour', 'h');
-	}
-
-	add(Number(parsed.minutes), 'minute', 'm');
-
-	if (!options.hideSeconds) {
-		if (
-			options.separateMilliseconds
-			|| options.formatSubMilliseconds
-			|| (!options.colonNotation && milliseconds < 1000)
-		) {
-			const seconds = Number(parsed.seconds);
-			const milliseconds = Number(parsed.milliseconds);
-			const microseconds = Number(parsed.microseconds);
-			const nanoseconds = Number(parsed.nanoseconds);
-
-			add(seconds, 'second', 's');
-
-			if (options.formatSubMilliseconds) {
-				add(milliseconds, 'millisecond', 'ms');
-				add(microseconds, 'microsecond', 'µs');
-				add(nanoseconds, 'nanosecond', 'ns');
-			} else {
-				const millisecondsAndBelow
-					= milliseconds
-					+ (microseconds / 1000)
-					+ (nanoseconds / 1e6);
-
-				const millisecondsDecimalDigits
-					= typeof options.millisecondsDecimalDigits === 'number'
-						? options.millisecondsDecimalDigits
-						: 0;
-
-				const roundedMilliseconds = millisecondsAndBelow >= 1
-					? Math.round(millisecondsAndBelow)
-					: Math.ceil(millisecondsAndBelow);
-
-				const millisecondsString = millisecondsDecimalDigits
-					? millisecondsAndBelow.toFixed(millisecondsDecimalDigits)
-					: roundedMilliseconds;
-
-				add(
-					Number.parseFloat(millisecondsString),
-					'millisecond',
-					'ms',
-					millisecondsString,
-				);
-			}
-		} else {
-			const seconds = (
-				(isBigInt ? Number(milliseconds % ONE_DAY_IN_MILLISECONDS) : milliseconds)
-				/ 1000
-			) % 60;
-			const secondsDecimalDigits
-				= typeof options.secondsDecimalDigits === 'number'
-					? options.secondsDecimalDigits
-					: 1;
-			const secondsFixed = floorDecimals(seconds, secondsDecimalDigits);
-			const secondsString = options.keepDecimalsOnWholeSeconds
-				? secondsFixed
-				: secondsFixed.replace(/\.0+$/, '');
-			add(Number.parseFloat(secondsString), 'second', 's', secondsString);
-		}
-	}
-
-	if (result.length === 0) {
-		return sign + '0' + (options.verbose ? ' milliseconds' : 'ms');
-	}
-
-	const separator = options.colonNotation ? ':' : ' ';
-	if (typeof options.unitCount === 'number') {
-		result = result.slice(0, Math.max(options.unitCount, 1));
-	}
-
-	return sign + result.join(separator);
-}
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/error.js
-
-
-// When `verbose` is `short|full|custom`, print each command's error when it fails
-const logError = (result, verboseInfo) => {
-	if (result.failed) {
-		verboseLog({
-			type: 'error',
-			verboseMessage: result.shortMessage,
-			verboseInfo,
-			result,
-		});
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/complete.js
-
-
-
-
-
-// When `verbose` is `short|full|custom`, print each command's completion, duration and error
-const logResult = (result, verboseInfo) => {
-	if (!isVerbose(verboseInfo)) {
-		return;
-	}
-
-	logError(result, verboseInfo);
-	logDuration(result, verboseInfo);
-};
-
-const logDuration = (result, verboseInfo) => {
-	const verboseMessage = `(done in ${prettyMilliseconds(result.durationMs)})`;
-	verboseLog({
-		type: 'duration',
-		verboseMessage,
-		verboseInfo,
-		result,
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/reject.js
-
-
-// Applies the `reject` option.
-// Also print the final log line with `verbose`.
-const handleResult = (result, verboseInfo, {reject}) => {
-	logResult(result, verboseInfo);
-
-	if (result.failed && reject) {
-		throw result;
-	}
-
-	return result;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/type.js
-
-
-
-
-// The `stdin`/`stdout`/`stderr` option can be of many types. This detects it.
-const getStdioItemType = (value, optionName) => {
-	if (type_isAsyncGenerator(value)) {
-		return 'asyncGenerator';
-	}
-
-	if (isSyncGenerator(value)) {
-		return 'generator';
-	}
-
-	if (isUrl(value)) {
-		return 'fileUrl';
-	}
-
-	if (isFilePathObject(value)) {
-		return 'filePath';
-	}
-
-	if (isWebStream(value)) {
-		return 'webStream';
-	}
-
-	if (is_stream_isStream(value, {checkOpen: false})) {
-		return 'native';
-	}
-
-	if (uint_array_isUint8Array(value)) {
-		return 'uint8Array';
-	}
-
-	if (isAsyncIterableObject(value)) {
-		return 'asyncIterable';
-	}
-
-	if (isIterableObject(value)) {
-		return 'iterable';
-	}
-
-	if (type_isTransformStream(value)) {
-		return getTransformStreamType({transform: value}, optionName);
-	}
-
-	if (isTransformOptions(value)) {
-		return getTransformObjectType(value, optionName);
-	}
-
-	return 'native';
-};
-
-const getTransformObjectType = (value, optionName) => {
-	if (is_stream_isDuplexStream(value.transform, {checkOpen: false})) {
-		return getDuplexType(value, optionName);
-	}
-
-	if (type_isTransformStream(value.transform)) {
-		return getTransformStreamType(value, optionName);
-	}
-
-	return getGeneratorObjectType(value, optionName);
-};
-
-const getDuplexType = (value, optionName) => {
-	validateNonGeneratorType(value, optionName, 'Duplex stream');
-	return 'duplex';
-};
-
-const getTransformStreamType = (value, optionName) => {
-	validateNonGeneratorType(value, optionName, 'web TransformStream');
-	return 'webTransform';
-};
-
-const validateNonGeneratorType = ({final, binary, objectMode}, optionName, typeName) => {
-	checkUndefinedOption(final, `${optionName}.final`, typeName);
-	checkUndefinedOption(binary, `${optionName}.binary`, typeName);
-	checkBooleanOption(objectMode, `${optionName}.objectMode`);
-};
-
-const checkUndefinedOption = (value, optionName, typeName) => {
-	if (value !== undefined) {
-		throw new TypeError(`The \`${optionName}\` option can only be defined when using a generator, not a ${typeName}.`);
-	}
-};
-
-const getGeneratorObjectType = ({transform, final, binary, objectMode}, optionName) => {
-	if (transform !== undefined && !type_isGenerator(transform)) {
-		throw new TypeError(`The \`${optionName}.transform\` option must be a generator, a Duplex stream or a web TransformStream.`);
-	}
-
-	if (is_stream_isDuplexStream(final, {checkOpen: false})) {
-		throw new TypeError(`The \`${optionName}.final\` option must not be a Duplex stream.`);
-	}
-
-	if (type_isTransformStream(final)) {
-		throw new TypeError(`The \`${optionName}.final\` option must not be a web TransformStream.`);
-	}
-
-	if (final !== undefined && !type_isGenerator(final)) {
-		throw new TypeError(`The \`${optionName}.final\` option must be a generator.`);
-	}
-
-	checkBooleanOption(binary, `${optionName}.binary`);
-	checkBooleanOption(objectMode, `${optionName}.objectMode`);
-
-	return type_isAsyncGenerator(transform) || type_isAsyncGenerator(final) ? 'asyncGenerator' : 'generator';
-};
-
-const checkBooleanOption = (value, optionName) => {
-	if (value !== undefined && typeof value !== 'boolean') {
-		throw new TypeError(`The \`${optionName}\` option must use a boolean.`);
-	}
-};
-
-const type_isGenerator = value => type_isAsyncGenerator(value) || isSyncGenerator(value);
-const type_isAsyncGenerator = value => Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]';
-const isSyncGenerator = value => Object.prototype.toString.call(value) === '[object GeneratorFunction]';
-const isTransformOptions = value => is_plain_obj_isPlainObject(value)
-	&& (value.transform !== undefined || value.final !== undefined);
-
-const isUrl = value => Object.prototype.toString.call(value) === '[object URL]';
-const isRegularUrl = value => isUrl(value) && value.protocol !== 'file:';
-
-const isFilePathObject = value => is_plain_obj_isPlainObject(value)
-	&& Object.keys(value).length > 0
-	&& Object.keys(value).every(key => FILE_PATH_KEYS.has(key))
-	&& isFilePathString(value.file);
-const FILE_PATH_KEYS = new Set(['file', 'append']);
-const isFilePathString = file => typeof file === 'string';
-
-const isUnknownStdioString = (type, value) => type === 'native'
-	&& typeof value === 'string'
-	&& !KNOWN_STDIO_STRINGS.has(value);
-const KNOWN_STDIO_STRINGS = new Set(['ipc', 'ignore', 'inherit', 'overlapped', 'pipe']);
-
-const type_isReadableStream = value => Object.prototype.toString.call(value) === '[object ReadableStream]';
-const type_isWritableStream = value => Object.prototype.toString.call(value) === '[object WritableStream]';
-const isWebStream = value => type_isReadableStream(value) || type_isWritableStream(value);
-const type_isTransformStream = value => type_isReadableStream(value?.readable) && type_isWritableStream(value?.writable);
-
-const isAsyncIterableObject = value => type_isObject(value) && typeof value[Symbol.asyncIterator] === 'function';
-const isIterableObject = value => type_isObject(value) && typeof value[Symbol.iterator] === 'function';
-const type_isObject = value => typeof value === 'object' && value !== null;
-
-// Types which modify `subprocess.std*`
-const TRANSFORM_TYPES = new Set(['generator', 'asyncGenerator', 'duplex', 'webTransform']);
-// Types which write to a file or a file descriptor
-const FILE_TYPES = new Set(['fileUrl', 'filePath', 'fileNumber']);
-// When two file descriptors of this type share the same target, we need to do some special logic
-const SPECIAL_DUPLICATE_TYPES_SYNC = new Set(['fileUrl', 'filePath']);
-const SPECIAL_DUPLICATE_TYPES = new Set([...SPECIAL_DUPLICATE_TYPES_SYNC, 'webStream', 'nodeStream']);
-// Do not allow two file descriptors of this type sharing the same target
-const FORBID_DUPLICATE_TYPES = new Set(['webTransform', 'duplex']);
-
-// Convert types to human-friendly strings for error messages
-const TYPE_TO_MESSAGE = {
-	generator: 'a generator',
-	asyncGenerator: 'an async generator',
-	fileUrl: 'a file URL',
-	filePath: 'a file path string',
-	fileNumber: 'a file descriptor number',
-	webStream: 'a web stream',
-	nodeStream: 'a Node.js stream',
-	webTransform: 'a web TransformStream',
-	duplex: 'a Duplex stream',
-	native: 'any value',
-	iterable: 'an iterable',
-	asyncIterable: 'an async iterable',
-	string: 'a string',
-	uint8Array: 'a Uint8Array',
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/object-mode.js
-
-
-/*
-Retrieve the `objectMode`s of a single transform.
-`objectMode` determines the return value's type, i.e. the `readableObjectMode`.
-The chunk argument's type is based on the previous generator's return value, i.e. the `writableObjectMode` is based on the previous `readableObjectMode`.
-The last input's generator is read by `subprocess.stdin` which:
-- should not be in `objectMode` for performance reasons.
-- can only be strings, Buffers and Uint8Arrays.
-Therefore its `readableObjectMode` must be `false`.
-The same applies to the first output's generator's `writableObjectMode`.
-*/
-const getTransformObjectModes = (objectMode, index, newTransforms, direction) => direction === 'output'
-	? getOutputObjectModes(objectMode, index, newTransforms)
-	: getInputObjectModes(objectMode, index, newTransforms);
-
-const getOutputObjectModes = (objectMode, index, newTransforms) => {
-	const writableObjectMode = index !== 0 && newTransforms[index - 1].value.readableObjectMode;
-	const readableObjectMode = objectMode ?? writableObjectMode;
-	return {writableObjectMode, readableObjectMode};
-};
-
-const getInputObjectModes = (objectMode, index, newTransforms) => {
-	const writableObjectMode = index === 0
-		? objectMode === true
-		: newTransforms[index - 1].value.readableObjectMode;
-	const readableObjectMode = index !== newTransforms.length - 1 && (objectMode ?? writableObjectMode);
-	return {writableObjectMode, readableObjectMode};
-};
-
-// Retrieve the `objectMode` of a file descriptor, e.g. `stdout` or `stderr`
-const getFdObjectMode = (stdioItems, direction) => {
-	const lastTransform = stdioItems.findLast(({type}) => TRANSFORM_TYPES.has(type));
-	if (lastTransform === undefined) {
-		return false;
-	}
-
-	return direction === 'input'
-		? lastTransform.value.writableObjectMode
-		: lastTransform.value.readableObjectMode;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/normalize.js
-
-
-
-
-
-// Transforms generators/duplex/TransformStream can have multiple shapes.
-// This normalizes it and applies default values.
-const normalizeTransforms = (stdioItems, optionName, direction, options) => [
-	...stdioItems.filter(({type}) => !TRANSFORM_TYPES.has(type)),
-	...getTransforms(stdioItems, optionName, direction, options),
-];
-
-const getTransforms = (stdioItems, optionName, direction, {encoding}) => {
-	const transforms = stdioItems.filter(({type}) => TRANSFORM_TYPES.has(type));
-	const newTransforms = Array.from({length: transforms.length});
-
-	for (const [index, stdioItem] of Object.entries(transforms)) {
-		newTransforms[index] = normalizeTransform({
-			stdioItem,
-			index: Number(index),
-			newTransforms,
-			optionName,
-			direction,
-			encoding,
-		});
-	}
-
-	return sortTransforms(newTransforms, direction);
-};
-
-const normalizeTransform = ({stdioItem, stdioItem: {type}, index, newTransforms, optionName, direction, encoding}) => {
-	if (type === 'duplex') {
-		return normalizeDuplex({stdioItem, optionName});
-	}
-
-	if (type === 'webTransform') {
-		return normalizeTransformStream({
-			stdioItem,
-			index,
-			newTransforms,
-			direction,
-		});
-	}
-
-	return normalizeGenerator({
-		stdioItem,
-		index,
-		newTransforms,
-		direction,
-		encoding,
-	});
-};
-
-const normalizeDuplex = ({
-	stdioItem,
-	stdioItem: {
-		value: {
-			transform,
-			transform: {writableObjectMode, readableObjectMode},
-			objectMode = readableObjectMode,
-		},
-	},
-	optionName,
-}) => {
-	if (objectMode && !readableObjectMode) {
-		throw new TypeError(`The \`${optionName}.objectMode\` option can only be \`true\` if \`new Duplex({objectMode: true})\` is used.`);
-	}
-
-	if (!objectMode && readableObjectMode) {
-		throw new TypeError(`The \`${optionName}.objectMode\` option cannot be \`false\` if \`new Duplex({objectMode: true})\` is used.`);
-	}
-
-	return {
-		...stdioItem,
-		value: {transform, writableObjectMode, readableObjectMode},
-	};
-};
-
-const normalizeTransformStream = ({stdioItem, stdioItem: {value}, index, newTransforms, direction}) => {
-	const {transform, objectMode} = is_plain_obj_isPlainObject(value) ? value : {transform: value};
-	const {writableObjectMode, readableObjectMode} = getTransformObjectModes(objectMode, index, newTransforms, direction);
-	return ({
-		...stdioItem,
-		value: {transform, writableObjectMode, readableObjectMode},
-	});
-};
-
-const normalizeGenerator = ({stdioItem, stdioItem: {value}, index, newTransforms, direction, encoding}) => {
-	const {
-		transform,
-		final,
-		binary: binaryOption = false,
-		preserveNewlines = false,
-		objectMode,
-	} = is_plain_obj_isPlainObject(value) ? value : {transform: value};
-	const binary = binaryOption || BINARY_ENCODINGS.has(encoding);
-	const {writableObjectMode, readableObjectMode} = getTransformObjectModes(objectMode, index, newTransforms, direction);
-	return {
-		...stdioItem,
-		value: {
-			transform,
-			final,
-			binary,
-			preserveNewlines,
-			writableObjectMode,
-			readableObjectMode,
-		},
-	};
-};
-
-const sortTransforms = (newTransforms, direction) => direction === 'input' ? newTransforms.reverse() : newTransforms;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/direction.js
-
-
-
-
-// For `stdio[fdNumber]` beyond stdin/stdout/stderr, we need to guess whether the value passed is intended for inputs or outputs.
-// This allows us to know whether to pipe _into_ or _from_ the stream.
-// When `stdio[fdNumber]` is a single value, this guess is fairly straightforward.
-// However, when it is an array instead, we also need to make sure the different values are not incompatible with each other.
-const getStreamDirection = (stdioItems, fdNumber, optionName) => {
-	const directions = stdioItems.map(stdioItem => getStdioItemDirection(stdioItem, fdNumber));
-
-	if (directions.includes('input') && directions.includes('output')) {
-		throw new TypeError(`The \`${optionName}\` option must not be an array of both readable and writable values.`);
-	}
-
-	return directions.find(Boolean) ?? DEFAULT_DIRECTION;
-};
-
-const getStdioItemDirection = ({type, value}, fdNumber) => KNOWN_DIRECTIONS[fdNumber] ?? guessStreamDirection[type](value);
-
-// `stdin`/`stdout`/`stderr` have a known direction
-const KNOWN_DIRECTIONS = ['input', 'output', 'output'];
-
-const anyDirection = () => undefined;
-const alwaysInput = () => 'input';
-
-// `string` can only be added through the `input` option, i.e. does not need to be handled here
-const guessStreamDirection = {
-	generator: anyDirection,
-	asyncGenerator: anyDirection,
-	fileUrl: anyDirection,
-	filePath: anyDirection,
-	iterable: alwaysInput,
-	asyncIterable: alwaysInput,
-	uint8Array: alwaysInput,
-	webStream: value => type_isWritableStream(value) ? 'output' : 'input',
-	nodeStream(value) {
-		if (!is_stream_isReadableStream(value, {checkOpen: false})) {
-			return 'output';
-		}
-
-		return is_stream_isWritableStream(value, {checkOpen: false}) ? undefined : 'input';
-	},
-	webTransform: anyDirection,
-	duplex: anyDirection,
-	native(value) {
-		const standardStreamDirection = getStandardStreamDirection(value);
-		if (standardStreamDirection !== undefined) {
-			return standardStreamDirection;
-		}
-
-		if (is_stream_isStream(value, {checkOpen: false})) {
-			return guessStreamDirection.nodeStream(value);
-		}
-	},
-};
-
-const getStandardStreamDirection = value => {
-	if ([0, external_node_process_namespaceObject.stdin].includes(value)) {
-		return 'input';
-	}
-
-	if ([1, 2, external_node_process_namespaceObject.stdout, external_node_process_namespaceObject.stderr].includes(value)) {
-		return 'output';
-	}
-};
-
-// When ambiguous, we initially keep the direction as `undefined`.
-// This allows arrays of `stdio` values to resolve the ambiguity.
-// For example, `stdio[3]: DuplexStream` is ambiguous, but `stdio[3]: [DuplexStream, WritableStream]` is not.
-// When the ambiguity remains, we default to `output` since it is the most common use case for additional file descriptors.
-const DEFAULT_DIRECTION = 'output';
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/array.js
-// The `ipc` option adds an `ipc` item to the `stdio` option
-const normalizeIpcStdioArray = (stdioArray, ipc) => ipc && !stdioArray.includes('ipc')
-	? [...stdioArray, 'ipc']
-	: stdioArray;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/stdio-option.js
-
-
-
-
-// Add support for `stdin`/`stdout`/`stderr` as an alias for `stdio`.
-// Also normalize the `stdio` option.
-const normalizeStdioOption = ({stdio, ipc, buffer, ...options}, verboseInfo, isSync) => {
-	const stdioArray = getStdioArray(stdio, options).map((stdioOption, fdNumber) => stdio_option_addDefaultValue(stdioOption, fdNumber));
-	return isSync
-		? normalizeStdioSync(stdioArray, buffer, verboseInfo)
-		: normalizeIpcStdioArray(stdioArray, ipc);
-};
-
-const getStdioArray = (stdio, options) => {
-	if (stdio === undefined) {
-		return STANDARD_STREAMS_ALIASES.map(alias => options[alias]);
-	}
-
-	if (stdio_option_hasAlias(options)) {
-		throw new Error(`It's not possible to provide \`stdio\` in combination with one of ${STANDARD_STREAMS_ALIASES.map(alias => `\`${alias}\``).join(', ')}`);
-	}
-
-	if (typeof stdio === 'string') {
-		return [stdio, stdio, stdio];
-	}
-
-	if (!Array.isArray(stdio)) {
-		throw new TypeError(`Expected \`stdio\` to be of type \`string\` or \`Array\`, got \`${typeof stdio}\``);
-	}
-
-	const length = Math.max(stdio.length, STANDARD_STREAMS_ALIASES.length);
-	return Array.from({length}, (_, fdNumber) => stdio[fdNumber]);
-};
-
-const stdio_option_hasAlias = options => STANDARD_STREAMS_ALIASES.some(alias => options[alias] !== undefined);
-
-const stdio_option_addDefaultValue = (stdioOption, fdNumber) => {
-	if (Array.isArray(stdioOption)) {
-		return stdioOption.map(item => stdio_option_addDefaultValue(item, fdNumber));
-	}
-
-	if (stdioOption === null || stdioOption === undefined) {
-		return fdNumber >= STANDARD_STREAMS_ALIASES.length ? 'ignore' : 'pipe';
-	}
-
-	return stdioOption;
-};
-
-// Using `buffer: false` with synchronous methods implies `stdout`/`stderr`: `ignore`.
-// Unless the output is needed, e.g. due to `verbose: 'full'` or to redirecting to a file.
-const normalizeStdioSync = (stdioArray, buffer, verboseInfo) => stdioArray.map((stdioOption, fdNumber) =>
-	!buffer[fdNumber]
-	&& fdNumber !== 0
-	&& !isFullVerbose(verboseInfo, fdNumber)
-	&& isOutputPipeOnly(stdioOption)
-		? 'ignore'
-		: stdioOption);
-
-const isOutputPipeOnly = stdioOption => stdioOption === 'pipe'
-	|| (Array.isArray(stdioOption) && stdioOption.every(item => item === 'pipe'));
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/native.js
-
-
-
-
-
-
-
-// When we use multiple `stdio` values for the same streams, we pass 'pipe' to `child_process.spawn()`.
-// We then emulate the piping done by core Node.js.
-// To do so, we transform the following values:
-//  - Node.js streams are marked as `type: nodeStream`
-//  - 'inherit' becomes `process.stdin|stdout|stderr`
-//  - any file descriptor integer becomes `process.stdio[fdNumber]`
-// All of the above transformations tell Execa to perform manual piping.
-const handleNativeStream = ({stdioItem, stdioItem: {type}, isStdioArray, fdNumber, direction, isSync}) => {
-	if (!isStdioArray || type !== 'native') {
-		return stdioItem;
-	}
-
-	return isSync
-		? handleNativeStreamSync({stdioItem, fdNumber, direction})
-		: handleNativeStreamAsync({stdioItem, fdNumber});
-};
-
-// Synchronous methods use a different logic.
-// 'inherit', file descriptors and process.std* are handled by readFileSync()/writeFileSync().
-const handleNativeStreamSync = ({stdioItem, stdioItem: {value, optionName}, fdNumber, direction}) => {
-	const targetFd = getTargetFd({
-		value,
-		optionName,
-		fdNumber,
-		direction,
-	});
-	if (targetFd !== undefined) {
-		return targetFd;
-	}
-
-	if (is_stream_isStream(value, {checkOpen: false})) {
-		throw new TypeError(`The \`${optionName}: Stream\` option cannot both be an array and include a stream with synchronous methods.`);
-	}
-
-	return stdioItem;
-};
-
-const getTargetFd = ({value, optionName, fdNumber, direction}) => {
-	const targetFdNumber = getTargetFdNumber(value, fdNumber);
-	if (targetFdNumber === undefined) {
-		return;
-	}
-
-	if (direction === 'output') {
-		return {type: 'fileNumber', value: targetFdNumber, optionName};
-	}
-
-	if (external_node_tty_namespaceObject.isatty(targetFdNumber)) {
-		throw new TypeError(`The \`${optionName}: ${serializeOptionValue(value)}\` option is invalid: it cannot be a TTY with synchronous methods.`);
-	}
-
-	return {type: 'uint8Array', value: bufferToUint8Array((0,external_node_fs_namespaceObject.readFileSync)(targetFdNumber)), optionName};
-};
-
-const getTargetFdNumber = (value, fdNumber) => {
-	if (value === 'inherit') {
-		return fdNumber;
-	}
-
-	if (typeof value === 'number') {
-		return value;
-	}
-
-	const standardStreamIndex = STANDARD_STREAMS.indexOf(value);
-	if (standardStreamIndex !== -1) {
-		return standardStreamIndex;
-	}
-};
-
-const handleNativeStreamAsync = ({stdioItem, stdioItem: {value, optionName}, fdNumber}) => {
-	if (value === 'inherit') {
-		return {type: 'nodeStream', value: getStandardStream(fdNumber, value, optionName), optionName};
-	}
-
-	if (typeof value === 'number') {
-		return {type: 'nodeStream', value: getStandardStream(value, value, optionName), optionName};
-	}
-
-	if (is_stream_isStream(value, {checkOpen: false})) {
-		return {type: 'nodeStream', value, optionName};
-	}
-
-	return stdioItem;
-};
-
-// Node.js does not allow to easily retrieve file descriptors beyond stdin/stdout/stderr as streams.
-//  - `fs.createReadStream()`/`fs.createWriteStream()` with the `fd` option do not work with character devices that use blocking reads/writes (such as interactive TTYs).
-//  - Using a TCP `Socket` would work but be rather complex to implement.
-// Since this is an edge case, we simply throw an error message.
-// See https://github.com/sindresorhus/execa/pull/643#discussion_r1435905707
-const getStandardStream = (fdNumber, value, optionName) => {
-	const standardStream = STANDARD_STREAMS[fdNumber];
-
-	if (standardStream === undefined) {
-		throw new TypeError(`The \`${optionName}: ${value}\` option is invalid: no such standard stream.`);
-	}
-
-	return standardStream;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/input-option.js
-
-
-
-
-// Append the `stdin` option with the `input` and `inputFile` options
-const handleInputOptions = ({input, inputFile}, fdNumber) => fdNumber === 0
-	? [
-		...handleInputOption(input),
-		...handleInputFileOption(inputFile),
-	]
-	: [];
-
-const handleInputOption = input => input === undefined ? [] : [{
-	type: getInputType(input),
-	value: input,
-	optionName: 'input',
-}];
-
-const getInputType = input => {
-	if (is_stream_isReadableStream(input, {checkOpen: false})) {
-		return 'nodeStream';
-	}
-
-	if (typeof input === 'string') {
-		return 'string';
-	}
-
-	if (uint_array_isUint8Array(input)) {
-		return 'uint8Array';
-	}
-
-	throw new Error('The `input` option must be a string, a Uint8Array or a Node.js Readable stream.');
-};
-
-const handleInputFileOption = inputFile => inputFile === undefined ? [] : [{
-	...getInputFileType(inputFile),
-	optionName: 'inputFile',
-}];
-
-const getInputFileType = inputFile => {
-	if (isUrl(inputFile)) {
-		return {type: 'fileUrl', value: inputFile};
-	}
-
-	if (isFilePathString(inputFile)) {
-		return {type: 'filePath', value: {file: inputFile}};
-	}
-
-	throw new Error('The `inputFile` option must be a file path string or a file URL.');
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/duplicate.js
-
-
-// Duplicates in the same file descriptor is most likely an error.
-// However, this can be useful with generators.
-const filterDuplicates = stdioItems => stdioItems.filter((stdioItemOne, indexOne) =>
-	stdioItems.every((stdioItemTwo, indexTwo) => stdioItemOne.value !== stdioItemTwo.value
-		|| indexOne >= indexTwo
-		|| stdioItemOne.type === 'generator'
-		|| stdioItemOne.type === 'asyncGenerator'));
-
-// Check if two file descriptors are sharing the same target.
-// For example `{stdout: {file: './output.txt'}, stderr: {file: './output.txt'}}`.
-const getDuplicateStream = ({stdioItem: {type, value, optionName}, direction, fileDescriptors, isSync}) => {
-	const otherStdioItems = getOtherStdioItems(fileDescriptors, type);
-	if (otherStdioItems.length === 0) {
-		return;
-	}
-
-	if (isSync) {
-		validateDuplicateStreamSync({
-			otherStdioItems,
-			type,
-			value,
-			optionName,
-			direction,
-		});
-		return;
-	}
-
-	if (SPECIAL_DUPLICATE_TYPES.has(type)) {
-		return getDuplicateStreamInstance({
-			otherStdioItems,
-			type,
-			value,
-			optionName,
-			direction,
-		});
-	}
-
-	if (FORBID_DUPLICATE_TYPES.has(type)) {
-		validateDuplicateTransform({
-			otherStdioItems,
-			type,
-			value,
-			optionName,
-		});
-	}
-};
-
-// Values shared by multiple file descriptors
-const getOtherStdioItems = (fileDescriptors, type) => fileDescriptors
-	.flatMap(({direction, stdioItems}) => stdioItems
-		.filter(stdioItem => stdioItem.type === type)
-		.map((stdioItem => ({...stdioItem, direction}))));
-
-// With `execaSync()`, do not allow setting a file path both in input and output
-const validateDuplicateStreamSync = ({otherStdioItems, type, value, optionName, direction}) => {
-	if (SPECIAL_DUPLICATE_TYPES_SYNC.has(type)) {
-		getDuplicateStreamInstance({
-			otherStdioItems,
-			type,
-			value,
-			optionName,
-			direction,
-		});
-	}
-};
-
-// When two file descriptors share the file or stream, we need to re-use the same underlying stream.
-// Otherwise, the stream would be closed twice when piping ends.
-// This is only an issue with output file descriptors.
-// This is not a problem with generator functions since those create a new instance for each file descriptor.
-// We also forbid input and output file descriptors sharing the same file or stream, since that does not make sense.
-const getDuplicateStreamInstance = ({otherStdioItems, type, value, optionName, direction}) => {
-	const duplicateStdioItems = otherStdioItems.filter(stdioItem => hasSameValue(stdioItem, value));
-	if (duplicateStdioItems.length === 0) {
-		return;
-	}
-
-	const differentStdioItem = duplicateStdioItems.find(stdioItem => stdioItem.direction !== direction);
-	throwOnDuplicateStream(differentStdioItem, optionName, type);
-
-	return direction === 'output' ? duplicateStdioItems[0].stream : undefined;
-};
-
-const hasSameValue = ({type, value}, secondValue) => {
-	if (type === 'filePath') {
-		return value.file === secondValue.file;
-	}
-
-	if (type === 'fileUrl') {
-		return value.href === secondValue.href;
-	}
-
-	return value === secondValue;
-};
-
-// We do not allow two file descriptors to share the same Duplex or TransformStream.
-// This is because those are set directly to `subprocess.std*`.
-// For example, this could result in `subprocess.stdout` and `subprocess.stderr` being the same value.
-// This means reading from either would get data from both stdout and stderr.
-const validateDuplicateTransform = ({otherStdioItems, type, value, optionName}) => {
-	const duplicateStdioItem = otherStdioItems.find(({value: {transform}}) => transform === value.transform);
-	throwOnDuplicateStream(duplicateStdioItem, optionName, type);
-};
-
-const throwOnDuplicateStream = (stdioItem, optionName, type) => {
-	if (stdioItem !== undefined) {
-		throw new TypeError(`The \`${stdioItem.optionName}\` and \`${optionName}\` options must not target ${TYPE_TO_MESSAGE[type]} that is the same.`);
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/handle.js
-
-
-
-
-
-
-
-
-
-
-// Handle `input`, `inputFile`, `stdin`, `stdout` and `stderr` options, before spawning, in async/sync mode
-// They are converted into an array of `fileDescriptors`.
-// Each `fileDescriptor` is normalized, validated and contains all information necessary for further handling.
-const handleStdio = (addProperties, options, verboseInfo, isSync) => {
-	const stdio = normalizeStdioOption(options, verboseInfo, isSync);
-	const initialFileDescriptors = stdio.map((stdioOption, fdNumber) => getFileDescriptor({
-		stdioOption,
-		fdNumber,
-		options,
-		isSync,
-	}));
-	const fileDescriptors = getFinalFileDescriptors({
-		initialFileDescriptors,
-		addProperties,
-		options,
-		isSync,
-	});
-	options.stdio = fileDescriptors.map(({stdioItems}) => forwardStdio(stdioItems));
-	return fileDescriptors;
-};
-
-const getFileDescriptor = ({stdioOption, fdNumber, options, isSync}) => {
-	const optionName = getStreamName(fdNumber);
-	const {stdioItems: initialStdioItems, isStdioArray} = initializeStdioItems({
-		stdioOption,
-		fdNumber,
-		options,
-		optionName,
-	});
-	const direction = getStreamDirection(initialStdioItems, fdNumber, optionName);
-	const stdioItems = initialStdioItems.map(stdioItem => handleNativeStream({
-		stdioItem,
-		isStdioArray,
-		fdNumber,
-		direction,
-		isSync,
-	}));
-	const normalizedStdioItems = normalizeTransforms(stdioItems, optionName, direction, options);
-	const objectMode = getFdObjectMode(normalizedStdioItems, direction);
-	validateFileObjectMode(normalizedStdioItems, objectMode);
-	return {direction, objectMode, stdioItems: normalizedStdioItems};
-};
-
-// We make sure passing an array with a single item behaves the same as passing that item without an array.
-// This is what users would expect.
-// For example, `stdout: ['ignore']` behaves the same as `stdout: 'ignore'`.
-const initializeStdioItems = ({stdioOption, fdNumber, options, optionName}) => {
-	const values = Array.isArray(stdioOption) ? stdioOption : [stdioOption];
-	const initialStdioItems = [
-		...values.map(value => initializeStdioItem(value, optionName)),
-		...handleInputOptions(options, fdNumber),
-	];
-
-	const stdioItems = filterDuplicates(initialStdioItems);
-	const isStdioArray = stdioItems.length > 1;
-	validateStdioArray(stdioItems, isStdioArray, optionName);
-	validateStreams(stdioItems);
-	return {stdioItems, isStdioArray};
-};
-
-const initializeStdioItem = (value, optionName) => ({
-	type: getStdioItemType(value, optionName),
-	value,
-	optionName,
-});
-
-const validateStdioArray = (stdioItems, isStdioArray, optionName) => {
-	if (stdioItems.length === 0) {
-		throw new TypeError(`The \`${optionName}\` option must not be an empty array.`);
-	}
-
-	if (!isStdioArray) {
-		return;
-	}
-
-	for (const {value, optionName} of stdioItems) {
-		if (INVALID_STDIO_ARRAY_OPTIONS.has(value)) {
-			throw new Error(`The \`${optionName}\` option must not include \`${value}\`.`);
-		}
-	}
-};
-
-// Using those `stdio` values together with others for the same stream does not make sense, so we make it fail.
-// However, we do allow it if the array has a single item.
-const INVALID_STDIO_ARRAY_OPTIONS = new Set(['ignore', 'ipc']);
-
-const validateStreams = stdioItems => {
-	for (const stdioItem of stdioItems) {
-		validateFileStdio(stdioItem);
-	}
-};
-
-const validateFileStdio = ({type, value, optionName}) => {
-	if (isRegularUrl(value)) {
-		throw new TypeError(`The \`${optionName}: URL\` option must use the \`file:\` scheme.
-For example, you can use the \`pathToFileURL()\` method of the \`url\` core module.`);
-	}
-
-	if (isUnknownStdioString(type, value)) {
-		throw new TypeError(`The \`${optionName}: { file: '...' }\` option must be used instead of \`${optionName}: '...'\`.`);
-	}
-};
-
-const validateFileObjectMode = (stdioItems, objectMode) => {
-	if (!objectMode) {
-		return;
-	}
-
-	const fileStdioItem = stdioItems.find(({type}) => FILE_TYPES.has(type));
-	if (fileStdioItem !== undefined) {
-		throw new TypeError(`The \`${fileStdioItem.optionName}\` option cannot use both files and transforms in objectMode.`);
-	}
-};
-
-// Some `stdio` values require Execa to create streams.
-// For example, file paths create file read/write streams.
-// Those transformations are specified in `addProperties`, which is both direction-specific and type-specific.
-const getFinalFileDescriptors = ({initialFileDescriptors, addProperties, options, isSync}) => {
-	const fileDescriptors = [];
-
-	try {
-		for (const fileDescriptor of initialFileDescriptors) {
-			fileDescriptors.push(getFinalFileDescriptor({
-				fileDescriptor,
-				fileDescriptors,
-				addProperties,
-				options,
-				isSync,
-			}));
-		}
-
-		return fileDescriptors;
-	} catch (error) {
-		cleanupCustomStreams(fileDescriptors);
-		throw error;
-	}
-};
-
-const getFinalFileDescriptor = ({
-	fileDescriptor: {direction, objectMode, stdioItems},
-	fileDescriptors,
-	addProperties,
-	options,
-	isSync,
-}) => {
-	const finalStdioItems = stdioItems.map(stdioItem => addStreamProperties({
-		stdioItem,
-		addProperties,
-		direction,
-		options,
-		fileDescriptors,
-		isSync,
-	}));
-	return {direction, objectMode, stdioItems: finalStdioItems};
-};
-
-const addStreamProperties = ({stdioItem, addProperties, direction, options, fileDescriptors, isSync}) => {
-	const duplicateStream = getDuplicateStream({
-		stdioItem,
-		direction,
-		fileDescriptors,
-		isSync,
-	});
-
-	if (duplicateStream !== undefined) {
-		return {...stdioItem, stream: duplicateStream};
-	}
-
-	return {
-		...stdioItem,
-		...addProperties[direction][stdioItem.type](stdioItem, options),
-	};
-};
-
-// The stream error handling is performed by the piping logic above, which cannot be performed before subprocess spawning.
-// If the subprocess spawning fails (e.g. due to an invalid command), the streams need to be manually destroyed.
-// We need to create those streams before subprocess spawning, in case their creation fails, e.g. when passing an invalid generator as argument.
-// Like this, an exception would be thrown, which would prevent spawning a subprocess.
-const cleanupCustomStreams = fileDescriptors => {
-	for (const {stdioItems} of fileDescriptors) {
-		for (const {stream} of stdioItems) {
-			if (stream !== undefined && !isStandardStream(stream)) {
-				stream.destroy();
-			}
-		}
-	}
-};
-
-// When the `std*: Iterable | WebStream | URL | filePath`, `input` or `inputFile` option is used, we pipe to `subprocess.std*`.
-// When the `std*: Array` option is used, we emulate some of the native values ('inherit', Node.js stream and file descriptor integer). To do so, we also need to pipe to `subprocess.std*`.
-// Therefore the `std*` options must be either `pipe` or `overlapped`. Other values do not set `subprocess.std*`.
-const forwardStdio = stdioItems => {
-	if (stdioItems.length > 1) {
-		return stdioItems.some(({value}) => value === 'overlapped') ? 'overlapped' : 'pipe';
-	}
-
-	const [{type, value}] = stdioItems;
-	return type === 'native' ? value : 'pipe';
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/handle-sync.js
-
-
-
-
-
-// Normalize `input`, `inputFile`, `stdin`, `stdout` and `stderr` options, before spawning, in sync mode
-const handleStdioSync = (options, verboseInfo) => handleStdio(addPropertiesSync, options, verboseInfo, true);
-
-const forbiddenIfSync = ({type, optionName}) => {
-	throwInvalidSyncValue(optionName, TYPE_TO_MESSAGE[type]);
-};
-
-const forbiddenNativeIfSync = ({optionName, value}) => {
-	if (value === 'ipc' || value === 'overlapped') {
-		throwInvalidSyncValue(optionName, `"${value}"`);
-	}
-
-	return {};
-};
-
-const throwInvalidSyncValue = (optionName, value) => {
-	throw new TypeError(`The \`${optionName}\` option cannot be ${value} with synchronous methods.`);
-};
-
-// Create streams used internally for redirecting when using specific values for the `std*` options, in sync mode.
-// For example, `stdin: {file}` reads the file synchronously, then passes it as the `input` option.
-const addProperties = {
-	generator() {},
-	asyncGenerator: forbiddenIfSync,
-	webStream: forbiddenIfSync,
-	nodeStream: forbiddenIfSync,
-	webTransform: forbiddenIfSync,
-	duplex: forbiddenIfSync,
-	asyncIterable: forbiddenIfSync,
-	native: forbiddenNativeIfSync,
-};
-
-const addPropertiesSync = {
-	input: {
-		...addProperties,
-		fileUrl: ({value}) => ({contents: [bufferToUint8Array((0,external_node_fs_namespaceObject.readFileSync)(value))]}),
-		filePath: ({value: {file}}) => ({contents: [bufferToUint8Array((0,external_node_fs_namespaceObject.readFileSync)(file))]}),
-		fileNumber: forbiddenIfSync,
-		iterable: ({value}) => ({contents: [...value]}),
-		string: ({value}) => ({contents: [value]}),
-		uint8Array: ({value}) => ({contents: [value]}),
-	},
-	output: {
-		...addProperties,
-		fileUrl: ({value}) => ({path: value}),
-		filePath: ({value: {file, append}}) => ({path: file, append}),
-		fileNumber: ({value}) => ({path: value}),
-		iterable: forbiddenIfSync,
-		string: forbiddenIfSync,
-		uint8Array: forbiddenIfSync,
-	},
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/strip-newline.js
-
-
-// Apply `stripFinalNewline` option, which applies to `result.stdout|stderr|all|stdio[*]`.
-// If the `lines` option is used, it is applied on each line, but using a different function.
-const stripNewline = (value, {stripFinalNewline}, fdNumber) => getStripFinalNewline(stripFinalNewline, fdNumber) && value !== undefined && !Array.isArray(value)
-	? strip_final_newline_stripFinalNewline(value)
-	: value;
-
-// Retrieve `stripFinalNewline` option value, including with `subprocess.all`
-const getStripFinalNewline = (stripFinalNewline, fdNumber) => fdNumber === 'all'
-	? stripFinalNewline[1] || stripFinalNewline[2]
-	: stripFinalNewline[fdNumber];
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/split.js
-// Split chunks line-wise for generators passed to the `std*` options
-const getSplitLinesGenerator = (binary, preserveNewlines, skipped, state) => binary || skipped
-	? undefined
-	: initializeSplitLines(preserveNewlines, state);
-
-// Same but for synchronous methods
-const splitLinesSync = (chunk, preserveNewlines, objectMode) => objectMode
-	? chunk.flatMap(item => splitLinesItemSync(item, preserveNewlines))
-	: splitLinesItemSync(chunk, preserveNewlines);
-
-const splitLinesItemSync = (chunk, preserveNewlines) => {
-	const {transform, final} = initializeSplitLines(preserveNewlines, {});
-	return [...transform(chunk), ...final()];
-};
-
-const initializeSplitLines = (preserveNewlines, state) => {
-	state.previousChunks = '';
-	return {
-		transform: splitGenerator.bind(undefined, state, preserveNewlines),
-		final: linesFinal.bind(undefined, state),
-	};
-};
-
-// This imperative logic is much faster than using `String.split()` and uses very low memory.
-const splitGenerator = function * (state, preserveNewlines, chunk) {
-	if (typeof chunk !== 'string') {
-		yield chunk;
-		return;
-	}
-
-	let {previousChunks} = state;
-	let start = -1;
-
-	for (let end = 0; end < chunk.length; end += 1) {
-		if (chunk[end] === '\n') {
-			const newlineLength = getNewlineLength(chunk, end, preserveNewlines, state);
-			let line = chunk.slice(start + 1, end + 1 - newlineLength);
-
-			if (previousChunks.length > 0) {
-				line = concatString(previousChunks, line);
-				previousChunks = '';
-			}
-
-			yield line;
-			start = end;
-		}
-	}
-
-	if (start !== chunk.length - 1) {
-		previousChunks = concatString(previousChunks, chunk.slice(start + 1));
-	}
-
-	state.previousChunks = previousChunks;
-};
-
-const getNewlineLength = (chunk, end, preserveNewlines, state) => {
-	if (preserveNewlines) {
-		return 0;
-	}
-
-	state.isWindowsNewline = end !== 0 && chunk[end - 1] === '\r';
-	return state.isWindowsNewline ? 2 : 1;
-};
-
-const linesFinal = function * ({previousChunks}) {
-	if (previousChunks.length > 0) {
-		yield previousChunks;
-	}
-};
-
-// Unless `preserveNewlines: true` is used, we strip the newline of each line.
-// This re-adds them after the user `transform` code has run.
-const getAppendNewlineGenerator = ({binary, preserveNewlines, readableObjectMode, state}) => binary || preserveNewlines || readableObjectMode
-	? undefined
-	: {transform: appendNewlineGenerator.bind(undefined, state)};
-
-const appendNewlineGenerator = function * ({isWindowsNewline = false}, chunk) {
-	const {unixNewline, windowsNewline, LF, concatBytes} = typeof chunk === 'string' ? linesStringInfo : linesUint8ArrayInfo;
-
-	if (chunk.at(-1) === LF) {
-		yield chunk;
-		return;
-	}
-
-	const newline = isWindowsNewline ? windowsNewline : unixNewline;
-	yield concatBytes(chunk, newline);
-};
-
-const concatString = (firstChunk, secondChunk) => `${firstChunk}${secondChunk}`;
-
-const linesStringInfo = {
-	windowsNewline: '\r\n',
-	unixNewline: '\n',
-	LF: '\n',
-	concatBytes: concatString,
-};
-
-const concatUint8Array = (firstChunk, secondChunk) => {
-	const chunk = new Uint8Array(firstChunk.length + secondChunk.length);
-	chunk.set(firstChunk, 0);
-	chunk.set(secondChunk, firstChunk.length);
-	return chunk;
-};
-
-const linesUint8ArrayInfo = {
-	windowsNewline: new Uint8Array([0x0D, 0x0A]),
-	unixNewline: new Uint8Array([0x0A]),
-	LF: 0x0A,
-	concatBytes: concatUint8Array,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/validate.js
-
-
-
-// Validate the type of chunk argument passed to transform generators
-const getValidateTransformInput = (writableObjectMode, optionName) => writableObjectMode
-	? undefined
-	: validateStringTransformInput.bind(undefined, optionName);
-
-const validateStringTransformInput = function * (optionName, chunk) {
-	if (typeof chunk !== 'string' && !uint_array_isUint8Array(chunk) && !external_node_buffer_.Buffer.isBuffer(chunk)) {
-		throw new TypeError(`The \`${optionName}\` option's transform must use "objectMode: true" to receive as input: ${typeof chunk}.`);
-	}
-
-	yield chunk;
-};
-
-// Validate the type of the value returned by transform generators
-const getValidateTransformReturn = (readableObjectMode, optionName) => readableObjectMode
-	? validateObjectTransformReturn.bind(undefined, optionName)
-	: validateStringTransformReturn.bind(undefined, optionName);
-
-const validateObjectTransformReturn = function * (optionName, chunk) {
-	validateEmptyReturn(optionName, chunk);
-	yield chunk;
-};
-
-const validateStringTransformReturn = function * (optionName, chunk) {
-	validateEmptyReturn(optionName, chunk);
-
-	if (typeof chunk !== 'string' && !uint_array_isUint8Array(chunk)) {
-		throw new TypeError(`The \`${optionName}\` option's function must yield a string or an Uint8Array, not ${typeof chunk}.`);
-	}
-
-	yield chunk;
-};
-
-const validateEmptyReturn = (optionName, chunk) => {
-	if (chunk === null || chunk === undefined) {
-		throw new TypeError(`The \`${optionName}\` option's function must not call \`yield ${chunk}\`.
-Instead, \`yield\` should either be called with a value, or not be called at all. For example:
-  if (condition) { yield value; }`);
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/encoding-transform.js
-
-
-
-
-/*
-When using binary encodings, add an internal generator that converts chunks from `Buffer` to `string` or `Uint8Array`.
-Chunks might be Buffer, Uint8Array or strings since:
-- `subprocess.stdout|stderr` emits Buffers
-- `subprocess.stdin.write()` accepts Buffer, Uint8Array or string
-- Previous generators might return Uint8Array or string
-
-However, those are converted to Buffer:
-- on writes: `Duplex.writable` `decodeStrings: true` default option
-- on reads: `Duplex.readable` `readableEncoding: null` default option
-*/
-const getEncodingTransformGenerator = (binary, encoding, skipped) => {
-	if (skipped) {
-		return;
-	}
-
-	if (binary) {
-		return {transform: encodingUint8ArrayGenerator.bind(undefined, new TextEncoder())};
-	}
-
-	const stringDecoder = new external_node_string_decoder_namespaceObject.StringDecoder(encoding);
-	return {
-		transform: encodingStringGenerator.bind(undefined, stringDecoder),
-		final: encodingStringFinal.bind(undefined, stringDecoder),
-	};
-};
-
-const encodingUint8ArrayGenerator = function * (textEncoder, chunk) {
-	if (external_node_buffer_.Buffer.isBuffer(chunk)) {
-		yield bufferToUint8Array(chunk);
-	} else if (typeof chunk === 'string') {
-		yield textEncoder.encode(chunk);
-	} else {
-		yield chunk;
-	}
-};
-
-const encodingStringGenerator = function * (stringDecoder, chunk) {
-	yield uint_array_isUint8Array(chunk) ? stringDecoder.write(chunk) : chunk;
-};
-
-const encodingStringFinal = function * (stringDecoder) {
-	const lastChunk = stringDecoder.end();
-	if (lastChunk !== '') {
-		yield lastChunk;
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/run-async.js
-
-
-// Applies a series of generator functions asynchronously
-const pushChunks = (0,external_node_util_.callbackify)(async (getChunks, state, getChunksArguments, transformStream) => {
-	state.currentIterable = getChunks(...getChunksArguments);
-
-	try {
-		for await (const chunk of state.currentIterable) {
-			transformStream.push(chunk);
-		}
-	} finally {
-		delete state.currentIterable;
-	}
-});
-
-// For each new chunk, apply each `transform()` method
-const transformChunk = async function * (chunk, generators, index) {
-	if (index === generators.length) {
-		yield chunk;
-		return;
-	}
-
-	const {transform = identityGenerator} = generators[index];
-	for await (const transformedChunk of transform(chunk)) {
-		yield * transformChunk(transformedChunk, generators, index + 1);
-	}
-};
-
-// At the end, apply each `final()` method, followed by the `transform()` method of the next transforms
-const finalChunks = async function * (generators) {
-	for (const [index, {final}] of Object.entries(generators)) {
-		yield * generatorFinalChunks(final, Number(index), generators);
-	}
-};
-
-const generatorFinalChunks = async function * (final, index, generators) {
-	if (final === undefined) {
-		return;
-	}
-
-	for await (const finalChunk of final()) {
-		yield * transformChunk(finalChunk, generators, index + 1);
-	}
-};
-
-// Cancel any ongoing async generator when the Transform is destroyed, e.g. when the subprocess errors
-const destroyTransform = (0,external_node_util_.callbackify)(async ({currentIterable}, error) => {
-	if (currentIterable !== undefined) {
-		await (error ? currentIterable.throw(error) : currentIterable.return());
-		return;
-	}
-
-	if (error) {
-		throw error;
-	}
-});
-
-const identityGenerator = function * (chunk) {
-	yield chunk;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/run-sync.js
-// Duplicate the code from `run-async.js` but as synchronous functions
-const pushChunksSync = (getChunksSync, getChunksArguments, transformStream, done) => {
-	try {
-		for (const chunk of getChunksSync(...getChunksArguments)) {
-			transformStream.push(chunk);
-		}
-
-		done();
-	} catch (error) {
-		done(error);
-	}
-};
-
-// Run synchronous generators with `execaSync()`
-const runTransformSync = (generators, chunks) => [
-	...chunks.flatMap(chunk => [...transformChunkSync(chunk, generators, 0)]),
-	...finalChunksSync(generators),
-];
-
-const transformChunkSync = function * (chunk, generators, index) {
-	if (index === generators.length) {
-		yield chunk;
-		return;
-	}
-
-	const {transform = run_sync_identityGenerator} = generators[index];
-	for (const transformedChunk of transform(chunk)) {
-		yield * transformChunkSync(transformedChunk, generators, index + 1);
-	}
-};
-
-const finalChunksSync = function * (generators) {
-	for (const [index, {final}] of Object.entries(generators)) {
-		yield * generatorFinalChunksSync(final, Number(index), generators);
-	}
-};
-
-const generatorFinalChunksSync = function * (final, index, generators) {
-	if (final === undefined) {
-		return;
-	}
-
-	for (const finalChunk of final()) {
-		yield * transformChunkSync(finalChunk, generators, index + 1);
-	}
-};
-
-const run_sync_identityGenerator = function * (chunk) {
-	yield chunk;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/transform/generator.js
-
-
-
-
-
-
-
-
-/*
-Generators can be used to transform/filter standard streams.
-
-Generators have a simple syntax, yet allows all of the following:
-- Sharing `state` between chunks
-- Flushing logic, by using a `final` function
-- Asynchronous logic
-- Emitting multiple chunks from a single source chunk, even if spaced in time, by using multiple `yield`
-- Filtering, by using no `yield`
-
-Therefore, there is no need to allow Node.js or web transform streams.
-
-The `highWaterMark` is kept as the default value, since this is what `subprocess.std*` uses.
-
-Chunks are currently processed serially. We could add a `concurrency` option to parallelize in the future.
-
-Transform an array of generator functions into a `Transform` stream.
-`Duplex.from(generator)` cannot be used because it does not allow setting the `objectMode` and `highWaterMark`.
-*/
-const generatorToStream = ({
-	value,
-	value: {transform, final, writableObjectMode, readableObjectMode},
-	optionName,
-}, {encoding}) => {
-	const state = {};
-	const generators = addInternalGenerators(value, encoding, optionName);
-
-	const transformAsync = type_isAsyncGenerator(transform);
-	const finalAsync = type_isAsyncGenerator(final);
-	const transformMethod = transformAsync
-		? pushChunks.bind(undefined, transformChunk, state)
-		: pushChunksSync.bind(undefined, transformChunkSync);
-	const finalMethod = transformAsync || finalAsync
-		? pushChunks.bind(undefined, finalChunks, state)
-		: pushChunksSync.bind(undefined, finalChunksSync);
-	const destroyMethod = transformAsync || finalAsync
-		? destroyTransform.bind(undefined, state)
-		: undefined;
-
-	const stream = new external_node_stream_.Transform({
-		writableObjectMode,
-		writableHighWaterMark: (0,external_node_stream_.getDefaultHighWaterMark)(writableObjectMode),
-		readableObjectMode,
-		readableHighWaterMark: (0,external_node_stream_.getDefaultHighWaterMark)(readableObjectMode),
-		transform(chunk, encoding, done) {
-			transformMethod([chunk, generators, 0], this, done);
-		},
-		flush(done) {
-			finalMethod([generators], this, done);
-		},
-		destroy: destroyMethod,
-	});
-	return {stream};
-};
-
-// Applies transform generators in sync mode
-const runGeneratorsSync = (chunks, stdioItems, encoding, isInput) => {
-	const generators = stdioItems.filter(({type}) => type === 'generator');
-	const reversedGenerators = isInput ? generators.reverse() : generators;
-
-	for (const {value, optionName} of reversedGenerators) {
-		const generators = addInternalGenerators(value, encoding, optionName);
-		chunks = runTransformSync(generators, chunks);
-	}
-
-	return chunks;
-};
-
-// Generators used internally to convert the chunk type, validate it, and split into lines
-const addInternalGenerators = (
-	{transform, final, binary, writableObjectMode, readableObjectMode, preserveNewlines},
-	encoding,
-	optionName,
-) => {
-	const state = {};
-	return [
-		{transform: getValidateTransformInput(writableObjectMode, optionName)},
-		getEncodingTransformGenerator(binary, encoding, writableObjectMode),
-		getSplitLinesGenerator(binary, preserveNewlines, writableObjectMode, state),
-		{transform, final},
-		{transform: getValidateTransformReturn(readableObjectMode, optionName)},
-		getAppendNewlineGenerator({
-			binary,
-			preserveNewlines,
-			readableObjectMode,
-			state,
-		}),
-	].filter(Boolean);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/input-sync.js
-
-
-
-
-// Apply `stdin`/`input`/`inputFile` options, before spawning, in sync mode, by converting it to the `input` option
-const addInputOptionsSync = (fileDescriptors, options) => {
-	for (const fdNumber of getInputFdNumbers(fileDescriptors)) {
-		addInputOptionSync(fileDescriptors, fdNumber, options);
-	}
-};
-
-const getInputFdNumbers = fileDescriptors => new Set(Object.entries(fileDescriptors)
-	.filter(([, {direction}]) => direction === 'input')
-	.map(([fdNumber]) => Number(fdNumber)));
-
-const addInputOptionSync = (fileDescriptors, fdNumber, options) => {
-	const {stdioItems} = fileDescriptors[fdNumber];
-	const allStdioItems = stdioItems.filter(({contents}) => contents !== undefined);
-	if (allStdioItems.length === 0) {
-		return;
-	}
-
-	if (fdNumber !== 0) {
-		const [{type, optionName}] = allStdioItems;
-		throw new TypeError(`Only the \`stdin\` option, not \`${optionName}\`, can be ${TYPE_TO_MESSAGE[type]} with synchronous methods.`);
-	}
-
-	const allContents = allStdioItems.map(({contents}) => contents);
-	const transformedContents = allContents.map(contents => applySingleInputGeneratorsSync(contents, stdioItems));
-	options.input = joinToUint8Array(transformedContents);
-};
-
-const applySingleInputGeneratorsSync = (contents, stdioItems) => {
-	const newContents = runGeneratorsSync(contents, stdioItems, 'utf8', true);
-	validateSerializable(newContents);
-	return joinToUint8Array(newContents);
-};
-
-const validateSerializable = newContents => {
-	const invalidItem = newContents.find(item => typeof item !== 'string' && !uint_array_isUint8Array(item));
-	if (invalidItem !== undefined) {
-		throw new TypeError(`The \`stdin\` option is invalid: when passing objects as input, a transform must be used to serialize them to strings or Uint8Arrays: ${invalidItem}.`);
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/output.js
-
-
-
-
-
-// `ignore` opts-out of `verbose` for a specific stream.
-// `ipc` cannot use piping.
-// `inherit` would result in double printing.
-// They can also lead to double printing when passing file descriptor integers or `process.std*`.
-// This only leaves with `pipe` and `overlapped`.
-const shouldLogOutput = ({stdioItems, encoding, verboseInfo, fdNumber}) => fdNumber !== 'all'
-	&& isFullVerbose(verboseInfo, fdNumber)
-	&& !BINARY_ENCODINGS.has(encoding)
-	&& fdUsesVerbose(fdNumber)
-	&& (stdioItems.some(({type, value}) => type === 'native' && PIPED_STDIO_VALUES.has(value))
-	|| stdioItems.every(({type}) => TRANSFORM_TYPES.has(type)));
-
-// Printing input streams would be confusing.
-// Files and streams can produce big outputs, which we don't want to print.
-// We could print `stdio[3+]` but it often is redirected to files and streams, with the same issue.
-// So we only print stdout and stderr.
-const fdUsesVerbose = fdNumber => fdNumber === 1 || fdNumber === 2;
-
-const PIPED_STDIO_VALUES = new Set(['pipe', 'overlapped']);
-
-// `verbose: 'full'` printing logic with async methods
-const logLines = async (linesIterable, stream, fdNumber, verboseInfo) => {
-	for await (const line of linesIterable) {
-		if (!isPipingStream(stream)) {
-			logLine(line, fdNumber, verboseInfo);
-		}
-	}
-};
-
-// `verbose: 'full'` printing logic with sync methods
-const logLinesSync = (linesArray, fdNumber, verboseInfo) => {
-	for (const line of linesArray) {
-		logLine(line, fdNumber, verboseInfo);
-	}
-};
-
-// When `subprocess.stdout|stderr.pipe()` is called, `verbose` becomes a noop.
-// This prevents the following problems:
-//  - `.pipe()` achieves the same result as using `stdout: 'inherit'`, `stdout: stream`, etc. which also make `verbose` a noop.
-//    For example, `subprocess.stdout.pipe(process.stdin)` would print each line twice.
-//  - When chaining subprocesses with `subprocess.pipe(otherSubprocess)`, only the last one should print its output.
-// Detecting whether `.pipe()` is impossible without monkey-patching it, so we use the following undocumented property.
-// This is not a critical behavior since changes of the following property would only make `verbose` more verbose.
-const isPipingStream = stream => stream._readableState.pipes.length > 0;
-
-// When `verbose` is `full`, print stdout|stderr
-const logLine = (line, fdNumber, verboseInfo) => {
-	const verboseMessage = serializeVerboseMessage(line);
-	verboseLog({
-		type: 'output',
-		verboseMessage,
-		fdNumber,
-		verboseInfo,
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/output-sync.js
-
-
-
-
-
-
-
-
-// Apply `stdout`/`stderr` options, after spawning, in sync mode
-const transformOutputSync = ({fileDescriptors, syncResult: {output}, options, isMaxBuffer, verboseInfo}) => {
-	if (output === null) {
-		return {output: Array.from({length: 3})};
-	}
-
-	const state = {};
-	const outputFiles = new Set([]);
-	const transformedOutput = output.map((result, fdNumber) =>
-		transformOutputResultSync({
-			result,
-			fileDescriptors,
-			fdNumber,
-			state,
-			outputFiles,
-			isMaxBuffer,
-			verboseInfo,
-		}, options));
-	return {output: transformedOutput, ...state};
-};
-
-const transformOutputResultSync = (
-	{result, fileDescriptors, fdNumber, state, outputFiles, isMaxBuffer, verboseInfo},
-	{buffer, encoding, lines, stripFinalNewline, maxBuffer},
-) => {
-	if (result === null) {
-		return;
-	}
-
-	const truncatedResult = truncateMaxBufferSync(result, isMaxBuffer, maxBuffer);
-	const uint8ArrayResult = bufferToUint8Array(truncatedResult);
-	const {stdioItems, objectMode} = fileDescriptors[fdNumber];
-	const chunks = runOutputGeneratorsSync([uint8ArrayResult], stdioItems, encoding, state);
-	const {serializedResult, finalResult = serializedResult} = serializeChunks({
-		chunks,
-		objectMode,
-		encoding,
-		lines,
-		stripFinalNewline,
-		fdNumber,
-	});
-
-	logOutputSync({
-		serializedResult,
-		fdNumber,
-		state,
-		verboseInfo,
-		encoding,
-		stdioItems,
-		objectMode,
-	});
-
-	const returnedResult = buffer[fdNumber] ? finalResult : undefined;
-
-	try {
-		if (state.error === undefined) {
-			writeToFiles(serializedResult, stdioItems, outputFiles);
-		}
-
-		return returnedResult;
-	} catch (error) {
-		state.error = error;
-		return returnedResult;
-	}
-};
-
-// Applies transform generators to `stdout`/`stderr`
-const runOutputGeneratorsSync = (chunks, stdioItems, encoding, state) => {
-	try {
-		return runGeneratorsSync(chunks, stdioItems, encoding, false);
-	} catch (error) {
-		state.error = error;
-		return chunks;
-	}
-};
-
-// The contents is converted to three stages:
-//  - serializedResult: used when the target is a file path/URL or a file descriptor (including 'inherit')
-//  - finalResult/returnedResult: returned as `result.std*`
-const serializeChunks = ({chunks, objectMode, encoding, lines, stripFinalNewline, fdNumber}) => {
-	if (objectMode) {
-		return {serializedResult: chunks};
-	}
-
-	if (encoding === 'buffer') {
-		return {serializedResult: joinToUint8Array(chunks)};
-	}
-
-	const serializedResult = joinToString(chunks, encoding);
-	if (lines[fdNumber]) {
-		return {serializedResult, finalResult: splitLinesSync(serializedResult, !stripFinalNewline[fdNumber], objectMode)};
-	}
-
-	return {serializedResult};
-};
-
-const logOutputSync = ({serializedResult, fdNumber, state, verboseInfo, encoding, stdioItems, objectMode}) => {
-	if (!shouldLogOutput({
-		stdioItems,
-		encoding,
-		verboseInfo,
-		fdNumber,
-	})) {
-		return;
-	}
-
-	const linesArray = splitLinesSync(serializedResult, false, objectMode);
-
-	try {
-		logLinesSync(linesArray, fdNumber, verboseInfo);
-	} catch (error) {
-		state.error ??= error;
-	}
-};
-
-// When the `std*` target is a file path/URL or a file descriptor
-const writeToFiles = (serializedResult, stdioItems, outputFiles) => {
-	for (const {path, append} of stdioItems.filter(({type}) => FILE_TYPES.has(type))) {
-		const pathString = typeof path === 'string' ? path : path.toString();
-		if (append || outputFiles.has(pathString)) {
-			(0,external_node_fs_namespaceObject.appendFileSync)(path, serializedResult);
-		} else {
-			outputFiles.add(pathString);
-			(0,external_node_fs_namespaceObject.writeFileSync)(path, serializedResult);
-		}
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/all-sync.js
-
-
-
-// Retrieve `result.all` with synchronous methods
-const getAllSync = ([, stdout, stderr], options) => {
-	if (!options.all) {
-		return;
-	}
-
-	if (stdout === undefined) {
-		return stderr;
-	}
-
-	if (stderr === undefined) {
-		return stdout;
-	}
-
-	if (Array.isArray(stdout)) {
-		return Array.isArray(stderr)
-			? [...stdout, ...stderr]
-			: [...stdout, stripNewline(stderr, options, 'all')];
-	}
-
-	if (Array.isArray(stderr)) {
-		return [stripNewline(stdout, options, 'all'), ...stderr];
-	}
-
-	if (uint_array_isUint8Array(stdout) && uint_array_isUint8Array(stderr)) {
-		return uint_array_concatUint8Arrays([stdout, stderr]);
-	}
-
-	return `${stdout}${stderr}`;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/exit-async.js
-
-
-
-// If `error` is emitted before `spawn`, `exit` will never be emitted.
-// However, `error` might be emitted after `spawn`.
-// In that case, `exit` will still be emitted.
-// Since the `exit` event contains the signal name, we want to make sure we are listening for it.
-// This function also takes into account the following unlikely cases:
-//  - `exit` being emitted in the same microtask as `spawn`
-//  - `error` being emitted multiple times
-const waitForExit = async (subprocess, context) => {
-	const [exitCode, signal] = await waitForExitOrError(subprocess);
-	context.isForcefullyTerminated ??= false;
-	return [exitCode, signal];
-};
-
-const waitForExitOrError = async subprocess => {
-	const [spawnPayload, exitPayload] = await Promise.allSettled([
-		(0,external_node_events_.once)(subprocess, 'spawn'),
-		(0,external_node_events_.once)(subprocess, 'exit'),
-	]);
-
-	if (spawnPayload.status === 'rejected') {
-		return [];
-	}
-
-	return exitPayload.status === 'rejected'
-		? waitForSubprocessExit(subprocess)
-		: exitPayload.value;
-};
-
-const waitForSubprocessExit = async subprocess => {
-	try {
-		return await (0,external_node_events_.once)(subprocess, 'exit');
-	} catch {
-		return waitForSubprocessExit(subprocess);
-	}
-};
-
-// Retrieve the final exit code and|or signal name
-const waitForSuccessfulExit = async exitPromise => {
-	const [exitCode, signal] = await exitPromise;
-
-	if (!isSubprocessErrorExit(exitCode, signal) && isFailedExit(exitCode, signal)) {
-		throw new DiscardedError();
-	}
-
-	return [exitCode, signal];
-};
-
-// When the subprocess fails due to an `error` event
-const isSubprocessErrorExit = (exitCode, signal) => exitCode === undefined && signal === undefined;
-// When the subprocess fails due to a non-0 exit code or to a signal termination
-const isFailedExit = (exitCode, signal) => exitCode !== 0 || signal !== null;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/exit-sync.js
-
-
-
-
-// Retrieve exit code, signal name and error information, with synchronous methods
-const getExitResultSync = ({error, status: exitCode, signal, output}, {maxBuffer}) => {
-	const resultError = getResultError(error, exitCode, signal);
-	const timedOut = resultError?.code === 'ETIMEDOUT';
-	const isMaxBuffer = isMaxBufferSync(resultError, output, maxBuffer);
-	return {
-		resultError,
-		exitCode,
-		signal,
-		timedOut,
-		isMaxBuffer,
-	};
-};
-
-const getResultError = (error, exitCode, signal) => {
-	if (error !== undefined) {
-		return error;
-	}
-
-	return isFailedExit(exitCode, signal) ? new DiscardedError() : undefined;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/main-sync.js
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Main shared logic for all sync methods: `execaSync()`, `$.sync()`
-const execaCoreSync = (rawFile, rawArguments, rawOptions) => {
-	const {file, commandArguments, command, escapedCommand, startTime, verboseInfo, options, fileDescriptors} = handleSyncArguments(rawFile, rawArguments, rawOptions);
-	const result = spawnSubprocessSync({
-		file,
-		commandArguments,
-		options,
-		command,
-		escapedCommand,
-		verboseInfo,
-		fileDescriptors,
-		startTime,
-	});
-	return handleResult(result, verboseInfo, options);
-};
-
-// Compute arguments to pass to `child_process.spawnSync()`
-const handleSyncArguments = (rawFile, rawArguments, rawOptions) => {
-	const {command, escapedCommand, startTime, verboseInfo} = handleCommand(rawFile, rawArguments, rawOptions);
-	const syncOptions = normalizeSyncOptions(rawOptions);
-	const {file, commandArguments, options} = options_normalizeOptions(rawFile, rawArguments, syncOptions);
-	validateSyncOptions(options);
-	const fileDescriptors = handleStdioSync(options, verboseInfo);
-	return {
-		file,
-		commandArguments,
-		command,
-		escapedCommand,
-		startTime,
-		verboseInfo,
-		options,
-		fileDescriptors,
-	};
-};
-
-// Options normalization logic specific to sync methods
-const normalizeSyncOptions = options => options.node && !options.ipc ? {...options, ipc: false} : options;
-
-// Options validation logic specific to sync methods
-const validateSyncOptions = ({ipc, ipcInput, detached, cancelSignal}) => {
-	if (ipcInput) {
-		throwInvalidSyncOption('ipcInput');
-	}
-
-	if (ipc) {
-		throwInvalidSyncOption('ipc: true');
-	}
-
-	if (detached) {
-		throwInvalidSyncOption('detached: true');
-	}
-
-	if (cancelSignal) {
-		throwInvalidSyncOption('cancelSignal');
-	}
-};
-
-const throwInvalidSyncOption = value => {
-	throw new TypeError(`The "${value}" option cannot be used with synchronous methods.`);
-};
-
-const spawnSubprocessSync = ({file, commandArguments, options, command, escapedCommand, verboseInfo, fileDescriptors, startTime}) => {
-	const syncResult = runSubprocessSync({
-		file,
-		commandArguments,
-		options,
-		command,
-		escapedCommand,
-		fileDescriptors,
-		startTime,
-	});
-	if (syncResult.failed) {
-		return syncResult;
-	}
-
-	const {resultError, exitCode, signal, timedOut, isMaxBuffer} = getExitResultSync(syncResult, options);
-	const {output, error = resultError} = transformOutputSync({
-		fileDescriptors,
-		syncResult,
-		options,
-		isMaxBuffer,
-		verboseInfo,
-	});
-	const stdio = output.map((stdioOutput, fdNumber) => stripNewline(stdioOutput, options, fdNumber));
-	const all = stripNewline(getAllSync(output, options), options, 'all');
-	return getSyncResult({
-		error,
-		exitCode,
-		signal,
-		timedOut,
-		isMaxBuffer,
-		stdio,
-		all,
-		options,
-		command,
-		escapedCommand,
-		startTime,
-	});
-};
-
-const runSubprocessSync = ({file, commandArguments, options, command, escapedCommand, fileDescriptors, startTime}) => {
-	try {
-		addInputOptionsSync(fileDescriptors, options);
-		const normalizedOptions = normalizeSpawnSyncOptions(options);
-		return (0,external_node_child_process_namespaceObject.spawnSync)(...concatenateShell(file, commandArguments, normalizedOptions));
-	} catch (error) {
-		return makeEarlyError({
-			error,
-			command,
-			escapedCommand,
-			fileDescriptors,
-			options,
-			startTime,
-			isSync: true,
-		});
-	}
-};
-
-// The `encoding` option is handled by Execa, not by `child_process.spawnSync()`
-const normalizeSpawnSyncOptions = ({encoding, maxBuffer, ...options}) => ({...options, encoding: 'buffer', maxBuffer: getMaxBufferSync(maxBuffer)});
-
-const getSyncResult = ({error, exitCode, signal, timedOut, isMaxBuffer, stdio, all, options, command, escapedCommand, startTime}) => error === undefined
-	? makeSuccessResult({
-		command,
-		escapedCommand,
-		stdio,
-		all,
-		ipcOutput: [],
-		options,
-		startTime,
-	})
-	: result_makeError({
-		error,
-		command,
-		escapedCommand,
-		timedOut,
-		isCanceled: false,
-		isGracefullyCanceled: false,
-		isMaxBuffer,
-		isForcefullyTerminated: false,
-		exitCode,
-		signal,
-		stdio,
-		all,
-		ipcOutput: [],
-		options,
-		startTime,
-		isSync: true,
-	});
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/get-one.js
-
-
-
-
-
-// Like `[sub]process.once('message')` but promise-based
-const getOneMessage = ({anyProcess, channel, isSubprocess, ipc}, {reference = true, filter} = {}) => {
-	validateIpcMethod({
-		methodName: 'getOneMessage',
-		isSubprocess,
-		ipc,
-		isConnected: isConnected(anyProcess),
-	});
-
-	return getOneMessageAsync({
-		anyProcess,
-		channel,
-		isSubprocess,
-		filter,
-		reference,
-	});
-};
-
-const getOneMessageAsync = async ({anyProcess, channel, isSubprocess, filter, reference}) => {
-	addReference(channel, reference);
-	const ipcEmitter = getIpcEmitter(anyProcess, channel, isSubprocess);
-	const controller = new AbortController();
-	try {
-		return await Promise.race([
-			getMessage(ipcEmitter, filter, controller),
-			get_one_throwOnDisconnect(ipcEmitter, isSubprocess, controller),
-			throwOnStrictError(ipcEmitter, isSubprocess, controller),
-		]);
-	} catch (error) {
-		disconnect(anyProcess);
-		throw error;
-	} finally {
-		controller.abort();
-		removeReference(channel, reference);
-	}
-};
-
-const getMessage = async (ipcEmitter, filter, {signal}) => {
-	if (filter === undefined) {
-		const [message] = await (0,external_node_events_.once)(ipcEmitter, 'message', {signal});
-		return message;
-	}
-
-	for await (const [message] of (0,external_node_events_.on)(ipcEmitter, 'message', {signal})) {
-		if (filter(message)) {
-			return message;
-		}
-	}
-};
-
-const get_one_throwOnDisconnect = async (ipcEmitter, isSubprocess, {signal}) => {
-	await (0,external_node_events_.once)(ipcEmitter, 'disconnect', {signal});
-	throwOnEarlyDisconnect(isSubprocess);
-};
-
-const throwOnStrictError = async (ipcEmitter, isSubprocess, {signal}) => {
-	const [error] = await (0,external_node_events_.once)(ipcEmitter, 'strict:error', {signal});
-	throw getStrictResponseError(error, isSubprocess);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/get-each.js
-
-
-
-
-
-// Like `[sub]process.on('message')` but promise-based
-const getEachMessage = ({anyProcess, channel, isSubprocess, ipc}, {reference = true} = {}) => loopOnMessages({
-	anyProcess,
-	channel,
-	isSubprocess,
-	ipc,
-	shouldAwait: !isSubprocess,
-	reference,
-});
-
-// Same but used internally
-const loopOnMessages = ({anyProcess, channel, isSubprocess, ipc, shouldAwait, reference}) => {
-	validateIpcMethod({
-		methodName: 'getEachMessage',
-		isSubprocess,
-		ipc,
-		isConnected: isConnected(anyProcess),
-	});
-
-	addReference(channel, reference);
-	const ipcEmitter = getIpcEmitter(anyProcess, channel, isSubprocess);
-	const controller = new AbortController();
-	const state = {};
-	stopOnDisconnect(anyProcess, ipcEmitter, controller);
-	abortOnStrictError({
-		ipcEmitter,
-		isSubprocess,
-		controller,
-		state,
-	});
-	return iterateOnMessages({
-		anyProcess,
-		channel,
-		ipcEmitter,
-		isSubprocess,
-		shouldAwait,
-		controller,
-		state,
-		reference,
-	});
-};
-
-const stopOnDisconnect = async (anyProcess, ipcEmitter, controller) => {
-	try {
-		await (0,external_node_events_.once)(ipcEmitter, 'disconnect', {signal: controller.signal});
-		controller.abort();
-	} catch {}
-};
-
-const abortOnStrictError = async ({ipcEmitter, isSubprocess, controller, state}) => {
-	try {
-		const [error] = await (0,external_node_events_.once)(ipcEmitter, 'strict:error', {signal: controller.signal});
-		state.error = getStrictResponseError(error, isSubprocess);
-		controller.abort();
-	} catch {}
-};
-
-const iterateOnMessages = async function * ({anyProcess, channel, ipcEmitter, isSubprocess, shouldAwait, controller, state, reference}) {
-	try {
-		for await (const [message] of (0,external_node_events_.on)(ipcEmitter, 'message', {signal: controller.signal})) {
-			throwIfStrictError(state);
-			yield message;
-		}
-	} catch {
-		throwIfStrictError(state);
-	} finally {
-		controller.abort();
-		removeReference(channel, reference);
-
-		if (!isSubprocess) {
-			disconnect(anyProcess);
-		}
-
-		if (shouldAwait) {
-			await anyProcess;
-		}
-	}
-};
-
-const throwIfStrictError = ({error}) => {
-	if (error) {
-		throw error;
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/methods.js
-
-
-
-
-
-
-// Add promise-based IPC methods in current process
-const addIpcMethods = (subprocess, {ipc}) => {
-	Object.assign(subprocess, getIpcMethods(subprocess, false, ipc));
-};
-
-// Get promise-based IPC in the subprocess
-const getIpcExport = () => {
-	const anyProcess = external_node_process_namespaceObject;
-	const isSubprocess = true;
-	const ipc = external_node_process_namespaceObject.channel !== undefined;
-
-	return {
-		...getIpcMethods(anyProcess, isSubprocess, ipc),
-		getCancelSignal: getCancelSignal.bind(undefined, {
-			anyProcess,
-			channel: anyProcess.channel,
-			isSubprocess,
-			ipc,
-		}),
-	};
-};
-
-// Retrieve the `ipc` shared by both the current process and the subprocess
-const getIpcMethods = (anyProcess, isSubprocess, ipc) => ({
-	sendMessage: sendMessage.bind(undefined, {
-		anyProcess,
-		channel: anyProcess.channel,
-		isSubprocess,
-		ipc,
-	}),
-	getOneMessage: getOneMessage.bind(undefined, {
-		anyProcess,
-		channel: anyProcess.channel,
-		isSubprocess,
-		ipc,
-	}),
-	getEachMessage: getEachMessage.bind(undefined, {
-		anyProcess,
-		channel: anyProcess.channel,
-		isSubprocess,
-		ipc,
-	}),
-});
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/return/early-error.js
-
-
-
-
-
-
-// When the subprocess fails to spawn.
-// We ensure the returned error is always both a promise and a subprocess.
-const handleEarlyError = ({error, command, escapedCommand, fileDescriptors, options, startTime, verboseInfo}) => {
-	cleanupCustomStreams(fileDescriptors);
-
-	const subprocess = new external_node_child_process_namespaceObject.ChildProcess();
-	createDummyStreams(subprocess, fileDescriptors);
-	Object.assign(subprocess, {readable, writable, duplex});
-
-	const earlyError = makeEarlyError({
-		error,
-		command,
-		escapedCommand,
-		fileDescriptors,
-		options,
-		startTime,
-		isSync: false,
-	});
-	const promise = handleDummyPromise(earlyError, verboseInfo, options);
-	return {subprocess, promise};
-};
-
-const createDummyStreams = (subprocess, fileDescriptors) => {
-	const stdin = createDummyStream();
-	const stdout = createDummyStream();
-	const stderr = createDummyStream();
-	const extraStdio = Array.from({length: fileDescriptors.length - 3}, createDummyStream);
-	const all = createDummyStream();
-	const stdio = [stdin, stdout, stderr, ...extraStdio];
-	Object.assign(subprocess, {
-		stdin,
-		stdout,
-		stderr,
-		all,
-		stdio,
-	});
-};
-
-const createDummyStream = () => {
-	const stream = new external_node_stream_.PassThrough();
-	stream.end();
-	return stream;
-};
-
-const readable = () => new external_node_stream_.Readable({read() {}});
-const writable = () => new external_node_stream_.Writable({write() {}});
-const duplex = () => new external_node_stream_.Duplex({read() {}, write() {}});
-
-const handleDummyPromise = async (error, verboseInfo, options) => handleResult(error, verboseInfo, options);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/stdio/handle-async.js
-
-
-
-
-
-
-
-// Handle `input`, `inputFile`, `stdin`, `stdout` and `stderr` options, before spawning, in async mode
-const handleStdioAsync = (options, verboseInfo) => handleStdio(addPropertiesAsync, options, verboseInfo, false);
-
-const forbiddenIfAsync = ({type, optionName}) => {
-	throw new TypeError(`The \`${optionName}\` option cannot be ${TYPE_TO_MESSAGE[type]}.`);
-};
-
-// Create streams used internally for piping when using specific values for the `std*` options, in async mode.
-// For example, `stdout: {file}` creates a file stream, which is piped from/to.
-const handle_async_addProperties = {
-	fileNumber: forbiddenIfAsync,
-	generator: generatorToStream,
-	asyncGenerator: generatorToStream,
-	nodeStream: ({value}) => ({stream: value}),
-	webTransform({value: {transform, writableObjectMode, readableObjectMode}}) {
-		const objectMode = writableObjectMode || readableObjectMode;
-		const stream = external_node_stream_.Duplex.fromWeb(transform, {objectMode});
-		return {stream};
-	},
-	duplex: ({value: {transform}}) => ({stream: transform}),
-	native() {},
-};
-
-const addPropertiesAsync = {
-	input: {
-		...handle_async_addProperties,
-		fileUrl: ({value}) => ({stream: (0,external_node_fs_namespaceObject.createReadStream)(value)}),
-		filePath: ({value: {file}}) => ({stream: (0,external_node_fs_namespaceObject.createReadStream)(file)}),
-		webStream: ({value}) => ({stream: external_node_stream_.Readable.fromWeb(value)}),
-		iterable: ({value}) => ({stream: external_node_stream_.Readable.from(value)}),
-		asyncIterable: ({value}) => ({stream: external_node_stream_.Readable.from(value)}),
-		string: ({value}) => ({stream: external_node_stream_.Readable.from(value)}),
-		uint8Array: ({value}) => ({stream: external_node_stream_.Readable.from(external_node_buffer_.Buffer.from(value))}),
-	},
-	output: {
-		...handle_async_addProperties,
-		fileUrl: ({value}) => ({stream: (0,external_node_fs_namespaceObject.createWriteStream)(value)}),
-		filePath: ({value: {file, append}}) => ({stream: (0,external_node_fs_namespaceObject.createWriteStream)(file, append ? {flags: 'a'} : {})}),
-		webStream: ({value}) => ({stream: external_node_stream_.Writable.fromWeb(value)}),
-		iterable: forbiddenIfAsync,
-		asyncIterable: forbiddenIfAsync,
-		string: forbiddenIfAsync,
-		uint8Array: forbiddenIfAsync,
-	},
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/@sindresorhus/merge-streams/index.js
-
-
-
-
-function merge_streams_mergeStreams(streams) {
-	if (!Array.isArray(streams)) {
-		throw new TypeError(`Expected an array, got \`${typeof streams}\`.`);
-	}
-
-	for (const stream of streams) {
-		merge_streams_validateStream(stream);
-	}
-
-	const objectMode = streams.some(({readableObjectMode}) => readableObjectMode);
-	const highWaterMark = merge_streams_getHighWaterMark(streams, objectMode);
-	const passThroughStream = new merge_streams_MergedStream({
-		objectMode,
-		writableHighWaterMark: highWaterMark,
-		readableHighWaterMark: highWaterMark,
-	});
-
-	for (const stream of streams) {
-		passThroughStream.add(stream);
-	}
-
-	return passThroughStream;
-}
-
-const merge_streams_getHighWaterMark = (streams, objectMode) => {
-	if (streams.length === 0) {
-		return (0,external_node_stream_.getDefaultHighWaterMark)(objectMode);
-	}
-
-	const highWaterMarks = streams
-		.filter(({readableObjectMode}) => readableObjectMode === objectMode)
-		.map(({readableHighWaterMark}) => readableHighWaterMark);
-	return Math.max(...highWaterMarks);
-};
-
-class merge_streams_MergedStream extends external_node_stream_.PassThrough {
-	#streams = new Set([]);
-	#ended = new Set([]);
-	#aborted = new Set([]);
-	#onFinished;
-	#unpipeEvent = Symbol('unpipe');
-	#streamPromises = new WeakMap();
-
-	add(stream) {
-		merge_streams_validateStream(stream);
-
-		if (this.#streams.has(stream)) {
-			return;
-		}
-
-		this.#streams.add(stream);
-
-		this.#onFinished ??= merge_streams_onMergedStreamFinished(this, this.#streams, this.#unpipeEvent);
-		const streamPromise = merge_streams_endWhenStreamsDone({
-			passThroughStream: this,
-			stream,
-			streams: this.#streams,
-			ended: this.#ended,
-			aborted: this.#aborted,
-			onFinished: this.#onFinished,
-			unpipeEvent: this.#unpipeEvent,
-		});
-		this.#streamPromises.set(stream, streamPromise);
-
-		stream.pipe(this, {end: false});
-	}
-
-	async remove(stream) {
-		merge_streams_validateStream(stream);
-
-		if (!this.#streams.has(stream)) {
-			return false;
-		}
-
-		const streamPromise = this.#streamPromises.get(stream);
-		if (streamPromise === undefined) {
-			return false;
-		}
-
-		this.#streamPromises.delete(stream);
-
-		stream.unpipe(this);
-		await streamPromise;
-		return true;
-	}
-}
-
-const merge_streams_onMergedStreamFinished = async (passThroughStream, streams, unpipeEvent) => {
-	merge_streams_updateMaxListeners(passThroughStream, merge_streams_PASSTHROUGH_LISTENERS_COUNT);
-	const controller = new AbortController();
-
-	try {
-		await Promise.race([
-			merge_streams_onMergedStreamEnd(passThroughStream, controller),
-			merge_streams_onInputStreamsUnpipe(passThroughStream, streams, unpipeEvent, controller),
-		]);
-	} finally {
-		controller.abort();
-		merge_streams_updateMaxListeners(passThroughStream, -merge_streams_PASSTHROUGH_LISTENERS_COUNT);
-	}
-};
-
-const merge_streams_onMergedStreamEnd = async (passThroughStream, {signal}) => {
-	try {
-		await (0,external_node_stream_promises_namespaceObject.finished)(passThroughStream, {signal, cleanup: true});
-	} catch (error) {
-		errorOrAbortStream(passThroughStream, error);
-		throw error;
-	}
-};
-
-const merge_streams_onInputStreamsUnpipe = async (passThroughStream, streams, unpipeEvent, {signal}) => {
-	for await (const [unpipedStream] of (0,external_node_events_.on)(passThroughStream, 'unpipe', {signal})) {
-		if (streams.has(unpipedStream)) {
-			unpipedStream.emit(unpipeEvent);
-		}
-	}
-};
-
-const merge_streams_validateStream = stream => {
-	if (typeof stream?.pipe !== 'function') {
-		throw new TypeError(`Expected a readable stream, got: \`${typeof stream}\`.`);
-	}
-};
-
-const merge_streams_endWhenStreamsDone = async ({passThroughStream, stream, streams, ended, aborted, onFinished, unpipeEvent}) => {
-	merge_streams_updateMaxListeners(passThroughStream, merge_streams_PASSTHROUGH_LISTENERS_PER_STREAM);
-	const controller = new AbortController();
-
-	try {
-		await Promise.race([
-			merge_streams_afterMergedStreamFinished(onFinished, stream, controller),
-			merge_streams_onInputStreamEnd({
-				passThroughStream,
-				stream,
-				streams,
-				ended,
-				aborted,
-				controller,
-			}),
-			merge_streams_onInputStreamUnpipe({
-				stream,
-				streams,
-				ended,
-				aborted,
-				unpipeEvent,
-				controller,
-			}),
-		]);
-	} finally {
-		controller.abort();
-		merge_streams_updateMaxListeners(passThroughStream, -merge_streams_PASSTHROUGH_LISTENERS_PER_STREAM);
-	}
-
-	if (streams.size > 0 && streams.size === ended.size + aborted.size) {
-		if (ended.size === 0 && aborted.size > 0) {
-			merge_streams_abortStream(passThroughStream);
-		} else {
-			merge_streams_endStream(passThroughStream);
-		}
-	}
-};
-
-const merge_streams_afterMergedStreamFinished = async (onFinished, stream, {signal}) => {
-	try {
-		await onFinished;
-		if (!signal.aborted) {
-			merge_streams_abortStream(stream);
-		}
-	} catch (error) {
-		if (!signal.aborted) {
-			errorOrAbortStream(stream, error);
-		}
-	}
-};
-
-const merge_streams_onInputStreamEnd = async ({passThroughStream, stream, streams, ended, aborted, controller: {signal}}) => {
-	try {
-		await (0,external_node_stream_promises_namespaceObject.finished)(stream, {
-			signal,
-			cleanup: true,
-			readable: true,
-			writable: false,
-		});
-		if (streams.has(stream)) {
-			ended.add(stream);
-		}
-	} catch (error) {
-		if (signal.aborted || !streams.has(stream)) {
-			return;
-		}
-
-		if (merge_streams_isAbortError(error)) {
-			aborted.add(stream);
-		} else {
-			merge_streams_errorStream(passThroughStream, error);
-		}
-	}
-};
-
-const merge_streams_onInputStreamUnpipe = async ({stream, streams, ended, aborted, unpipeEvent, controller: {signal}}) => {
-	await (0,external_node_events_.once)(stream, unpipeEvent, {signal});
-
-	if (!stream.readable) {
-		return (0,external_node_events_.once)(signal, 'abort', {signal});
-	}
-
-	streams.delete(stream);
-	ended.delete(stream);
-	aborted.delete(stream);
-};
-
-const merge_streams_endStream = stream => {
-	if (stream.writable) {
-		stream.end();
-	}
-};
-
-const errorOrAbortStream = (stream, error) => {
-	if (merge_streams_isAbortError(error)) {
-		merge_streams_abortStream(stream);
-	} else {
-		merge_streams_errorStream(stream, error);
-	}
-};
-
-// This is the error thrown by `finished()` on `stream.destroy()`
-const merge_streams_isAbortError = error => error?.code === 'ERR_STREAM_PREMATURE_CLOSE';
-
-const merge_streams_abortStream = stream => {
-	if (stream.readable || stream.writable) {
-		stream.destroy();
-	}
-};
-
-// `stream.destroy(error)` crashes the process with `uncaughtException` if no `error` event listener exists on `stream`.
-// We take care of error handling on user behalf, so we do not want this to happen.
-const merge_streams_errorStream = (stream, error) => {
-	if (!stream.destroyed) {
-		stream.once('error', merge_streams_noop);
-		stream.destroy(error);
-	}
-};
-
-const merge_streams_noop = () => {};
-
-const merge_streams_updateMaxListeners = (passThroughStream, increment) => {
-	const maxListeners = passThroughStream.getMaxListeners();
-	if (maxListeners !== 0 && maxListeners !== Number.POSITIVE_INFINITY) {
-		passThroughStream.setMaxListeners(maxListeners + increment);
-	}
-};
-
-// Number of times `passThroughStream.on()` is called regardless of streams:
-//  - once due to `finished(passThroughStream)`
-//  - once due to `on(passThroughStream)`
-const merge_streams_PASSTHROUGH_LISTENERS_COUNT = 2;
-
-// Number of times `passThroughStream.on()` is called per stream:
-//  - once due to `stream.pipe(passThroughStream)`
-const merge_streams_PASSTHROUGH_LISTENERS_PER_STREAM = 1;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/pipeline.js
-
-
-
-// Similar to `Stream.pipeline(source, destination)`, but does not destroy standard streams
-const pipeStreams = (source, destination) => {
-	source.pipe(destination);
-	onSourceFinish(source, destination);
-	onDestinationFinish(source, destination);
-};
-
-// `source.pipe(destination)` makes `destination` end when `source` ends.
-// But it does not propagate aborts or errors. This function does it.
-const onSourceFinish = async (source, destination) => {
-	if (isStandardStream(source) || isStandardStream(destination)) {
-		return;
-	}
-
-	try {
-		await (0,external_node_stream_promises_namespaceObject.finished)(source, {cleanup: true, readable: true, writable: false});
-	} catch {}
-
-	endDestinationStream(destination);
-};
-
-const endDestinationStream = destination => {
-	if (destination.writable) {
-		destination.end();
-	}
-};
-
-// We do the same thing in the other direction as well.
-const onDestinationFinish = async (source, destination) => {
-	if (isStandardStream(source) || isStandardStream(destination)) {
-		return;
-	}
-
-	try {
-		await (0,external_node_stream_promises_namespaceObject.finished)(destination, {cleanup: true, readable: false, writable: true});
-	} catch {}
-
-	abortSourceStream(source);
-};
-
-const abortSourceStream = source => {
-	if (source.readable) {
-		source.destroy();
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/output-async.js
-
-
-
-
-
-
-// Handle `input`, `inputFile`, `stdin`, `stdout` and `stderr` options, after spawning, in async mode
-// When multiple input streams are used, we merge them to ensure the output stream ends only once each input stream has ended
-const pipeOutputAsync = (subprocess, fileDescriptors, controller) => {
-	const pipeGroups = new Map();
-
-	for (const [fdNumber, {stdioItems, direction}] of Object.entries(fileDescriptors)) {
-		for (const {stream} of stdioItems.filter(({type}) => TRANSFORM_TYPES.has(type))) {
-			pipeTransform(subprocess, stream, direction, fdNumber);
-		}
-
-		for (const {stream} of stdioItems.filter(({type}) => !TRANSFORM_TYPES.has(type))) {
-			pipeStdioItem({
-				subprocess,
-				stream,
-				direction,
-				fdNumber,
-				pipeGroups,
-				controller,
-			});
-		}
-	}
-
-	for (const [outputStream, inputStreams] of pipeGroups.entries()) {
-		const inputStream = inputStreams.length === 1 ? inputStreams[0] : merge_streams_mergeStreams(inputStreams);
-		pipeStreams(inputStream, outputStream);
-	}
-};
-
-// When using transforms, `subprocess.stdin|stdout|stderr|stdio` is directly mutated
-const pipeTransform = (subprocess, stream, direction, fdNumber) => {
-	if (direction === 'output') {
-		pipeStreams(subprocess.stdio[fdNumber], stream);
-	} else {
-		pipeStreams(stream, subprocess.stdio[fdNumber]);
-	}
-
-	const streamProperty = SUBPROCESS_STREAM_PROPERTIES[fdNumber];
-	if (streamProperty !== undefined) {
-		subprocess[streamProperty] = stream;
-	}
-
-	subprocess.stdio[fdNumber] = stream;
-};
-
-const SUBPROCESS_STREAM_PROPERTIES = ['stdin', 'stdout', 'stderr'];
-
-// Most `std*` option values involve piping `subprocess.std*` to a stream.
-// The stream is either passed by the user or created internally.
-const pipeStdioItem = ({subprocess, stream, direction, fdNumber, pipeGroups, controller}) => {
-	if (stream === undefined) {
-		return;
-	}
-
-	setStandardStreamMaxListeners(stream, controller);
-
-	const [inputStream, outputStream] = direction === 'output'
-		? [stream, subprocess.stdio[fdNumber]]
-		: [subprocess.stdio[fdNumber], stream];
-	const outputStreams = pipeGroups.get(inputStream) ?? [];
-	pipeGroups.set(inputStream, [...outputStreams, outputStream]);
-};
-
-// Multiple subprocesses might be piping from/to `process.std*` at the same time.
-// This is not necessarily an error and should not print a `maxListeners` warning.
-const setStandardStreamMaxListeners = (stream, {signal}) => {
-	if (isStandardStream(stream)) {
-		incrementMaxListeners(stream, MAX_LISTENERS_INCREMENT, signal);
-	}
-};
-
-// `source.pipe(destination)` adds at most 1 listener for each event.
-// If `stdin` option is an array, the values might be combined with `merge-streams`.
-// That library also listens for `source` end, which adds 1 more listener.
-const MAX_LISTENERS_INCREMENT = 2;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/signal-exit/dist/mjs/signals.js
-/**
- * This is not the set of all possible signals.
- *
- * It IS, however, the set of all signals that trigger
- * an exit on either Linux or BSD systems.  Linux is a
- * superset of the signal names supported on BSD, and
- * the unknown signals just fail to register, so we can
- * catch that easily enough.
- *
- * Windows signals are a different set, since there are
- * signals that terminate Windows processes, but don't
- * terminate (or don't even exist) on Posix systems.
- *
- * Don't bother with SIGKILL.  It's uncatchable, which
- * means that we can't fire any callbacks anyway.
- *
- * If a user does happen to register a handler on a non-
- * fatal signal like SIGWINCH or something, and then
- * exit, it'll end up firing `process.emit('exit')`, so
- * the handler will be fired anyway.
- *
- * SIGBUS, SIGFPE, SIGSEGV and SIGILL, when not raised
- * artificially, inherently leave the process in a
- * state from which it is not safe to try and enter JS
- * listeners.
- */
-const signals_signals = [];
-signals_signals.push('SIGHUP', 'SIGINT', 'SIGTERM');
-if (process.platform !== 'win32') {
-    signals_signals.push('SIGALRM', 'SIGABRT', 'SIGVTALRM', 'SIGXCPU', 'SIGXFSZ', 'SIGUSR2', 'SIGTRAP', 'SIGSYS', 'SIGQUIT', 'SIGIOT'
-    // should detect profiler and enable/disable accordingly.
-    // see #21
-    // 'SIGPROF'
-    );
-}
-if (process.platform === 'linux') {
-    signals_signals.push('SIGIO', 'SIGPOLL', 'SIGPWR', 'SIGSTKFLT');
-}
-//# sourceMappingURL=signals.js.map
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/signal-exit/dist/mjs/index.js
-// Note: since nyc uses this module to output coverage, any lines
-// that are in the direct sync flow of nyc's outputCoverage are
-// ignored, since we can never get coverage for them.
-// grab a reference to node's real process object right away
-
-
-const mjs_processOk = (process) => !!process &&
-    typeof process === 'object' &&
-    typeof process.removeListener === 'function' &&
-    typeof process.emit === 'function' &&
-    typeof process.reallyExit === 'function' &&
-    typeof process.listeners === 'function' &&
-    typeof process.kill === 'function' &&
-    typeof process.pid === 'number' &&
-    typeof process.on === 'function';
-const mjs_kExitEmitter = Symbol.for('signal-exit emitter');
-const mjs_global = globalThis;
-const mjs_ObjectDefineProperty = Object.defineProperty.bind(Object);
-// teeny special purpose ee
-class mjs_Emitter {
-    emitted = {
-        afterExit: false,
-        exit: false,
-    };
-    listeners = {
-        afterExit: [],
-        exit: [],
-    };
-    count = 0;
-    id = Math.random();
-    constructor() {
-        if (mjs_global[mjs_kExitEmitter]) {
-            return mjs_global[mjs_kExitEmitter];
-        }
-        mjs_ObjectDefineProperty(mjs_global, mjs_kExitEmitter, {
-            value: this,
-            writable: false,
-            enumerable: false,
-            configurable: false,
-        });
-    }
-    on(ev, fn) {
-        this.listeners[ev].push(fn);
-    }
-    removeListener(ev, fn) {
-        const list = this.listeners[ev];
-        const i = list.indexOf(fn);
-        /* c8 ignore start */
-        if (i === -1) {
-            return;
-        }
-        /* c8 ignore stop */
-        if (i === 0 && list.length === 1) {
-            list.length = 0;
-        }
-        else {
-            list.splice(i, 1);
-        }
-    }
-    emit(ev, code, signal) {
-        if (this.emitted[ev]) {
-            return false;
-        }
-        this.emitted[ev] = true;
-        let ret = false;
-        for (const fn of this.listeners[ev]) {
-            ret = fn(code, signal) === true || ret;
-        }
-        if (ev === 'exit') {
-            ret = this.emit('afterExit', code, signal) || ret;
-        }
-        return ret;
-    }
-}
-class mjs_SignalExitBase {
-}
-const mjs_signalExitWrap = (handler) => {
-    return {
-        onExit(cb, opts) {
-            return handler.onExit(cb, opts);
-        },
-        load() {
-            return handler.load();
-        },
-        unload() {
-            return handler.unload();
-        },
-    };
-};
-class mjs_SignalExitFallback extends mjs_SignalExitBase {
-    onExit() {
-        return () => { };
-    }
-    load() { }
-    unload() { }
-}
-class mjs_SignalExit extends mjs_SignalExitBase {
-    // "SIGHUP" throws an `ENOSYS` error on Windows,
-    // so use a supported signal instead
-    /* c8 ignore start */
-    #hupSig = dist_mjs_process.platform === 'win32' ? 'SIGINT' : 'SIGHUP';
-    /* c8 ignore stop */
-    #emitter = new mjs_Emitter();
-    #process;
-    #originalProcessEmit;
-    #originalProcessReallyExit;
-    #sigListeners = {};
-    #loaded = false;
-    constructor(process) {
-        super();
-        this.#process = process;
-        // { <signal>: <listener fn>, ... }
-        this.#sigListeners = {};
-        for (const sig of signals_signals) {
-            this.#sigListeners[sig] = () => {
-                // If there are no other listeners, an exit is coming!
-                // Simplest way: remove us and then re-send the signal.
-                // We know that this will kill the process, so we can
-                // safely emit now.
-                const listeners = this.#process.listeners(sig);
-                let { count } = this.#emitter;
-                // This is a workaround for the fact that signal-exit v3 and signal
-                // exit v4 are not aware of each other, and each will attempt to let
-                // the other handle it, so neither of them do. To correct this, we
-                // detect if we're the only handler *except* for previous versions
-                // of signal-exit, and increment by the count of listeners it has
-                // created.
-                /* c8 ignore start */
-                const p = process;
-                if (typeof p.__signal_exit_emitter__ === 'object' &&
-                    typeof p.__signal_exit_emitter__.count === 'number') {
-                    count += p.__signal_exit_emitter__.count;
-                }
-                /* c8 ignore stop */
-                if (listeners.length === count) {
-                    this.unload();
-                    const ret = this.#emitter.emit('exit', null, sig);
-                    /* c8 ignore start */
-                    const s = sig === 'SIGHUP' ? this.#hupSig : sig;
-                    if (!ret)
-                        process.kill(process.pid, s);
-                    /* c8 ignore stop */
-                }
-            };
-        }
-        this.#originalProcessReallyExit = process.reallyExit;
-        this.#originalProcessEmit = process.emit;
-    }
-    onExit(cb, opts) {
-        /* c8 ignore start */
-        if (!mjs_processOk(this.#process)) {
-            return () => { };
-        }
-        /* c8 ignore stop */
-        if (this.#loaded === false) {
-            this.load();
-        }
-        const ev = opts?.alwaysLast ? 'afterExit' : 'exit';
-        this.#emitter.on(ev, cb);
-        return () => {
-            this.#emitter.removeListener(ev, cb);
-            if (this.#emitter.listeners['exit'].length === 0 &&
-                this.#emitter.listeners['afterExit'].length === 0) {
-                this.unload();
-            }
-        };
-    }
-    load() {
-        if (this.#loaded) {
-            return;
-        }
-        this.#loaded = true;
-        // This is the number of onSignalExit's that are in play.
-        // It's important so that we can count the correct number of
-        // listeners on signals, and don't wait for the other one to
-        // handle it instead of us.
-        this.#emitter.count += 1;
-        for (const sig of signals_signals) {
-            try {
-                const fn = this.#sigListeners[sig];
-                if (fn)
-                    this.#process.on(sig, fn);
-            }
-            catch (_) { }
-        }
-        this.#process.emit = (ev, ...a) => {
-            return this.#processEmit(ev, ...a);
-        };
-        this.#process.reallyExit = (code) => {
-            return this.#processReallyExit(code);
-        };
-    }
-    unload() {
-        if (!this.#loaded) {
-            return;
-        }
-        this.#loaded = false;
-        signals_signals.forEach(sig => {
-            const listener = this.#sigListeners[sig];
-            /* c8 ignore start */
-            if (!listener) {
-                throw new Error('Listener not defined for signal: ' + sig);
-            }
-            /* c8 ignore stop */
-            try {
-                this.#process.removeListener(sig, listener);
-                /* c8 ignore start */
-            }
-            catch (_) { }
-            /* c8 ignore stop */
-        });
-        this.#process.emit = this.#originalProcessEmit;
-        this.#process.reallyExit = this.#originalProcessReallyExit;
-        this.#emitter.count -= 1;
-    }
-    #processReallyExit(code) {
-        /* c8 ignore start */
-        if (!mjs_processOk(this.#process)) {
-            return 0;
-        }
-        this.#process.exitCode = code || 0;
-        /* c8 ignore stop */
-        this.#emitter.emit('exit', this.#process.exitCode, null);
-        return this.#originalProcessReallyExit.call(this.#process, this.#process.exitCode);
-    }
-    #processEmit(ev, ...args) {
-        const og = this.#originalProcessEmit;
-        if (ev === 'exit' && mjs_processOk(this.#process)) {
-            if (typeof args[0] === 'number') {
-                this.#process.exitCode = args[0];
-                /* c8 ignore start */
-            }
-            /* c8 ignore start */
-            const ret = og.call(this.#process, ev, ...args);
-            /* c8 ignore start */
-            this.#emitter.emit('exit', this.#process.exitCode, null);
-            /* c8 ignore stop */
-            return ret;
-        }
-        else {
-            return og.call(this.#process, ev, ...args);
-        }
-    }
-}
-const dist_mjs_process = globalThis.process;
-// wrap so that we call the method on the actual handler, without
-// exporting it directly.
-const { 
-/**
- * Called when the process is exiting, whether via signal, explicit
- * exit, or running out of stuff to do.
- *
- * If the global process object is not suitable for instrumentation,
- * then this will be a no-op.
- *
- * Returns a function that may be used to unload signal-exit.
- */
-onExit: mjs_onExit, 
-/**
- * Load the listeners.  Likely you never need to call this, unless
- * doing a rather deep integration with signal-exit functionality.
- * Mostly exposed for the benefit of testing.
- *
- * @internal
- */
-load: dist_mjs_load, 
-/**
- * Unload the listeners.  Likely you never need to call this, unless
- * doing a rather deep integration with signal-exit functionality.
- * Mostly exposed for the benefit of testing.
- *
- * @internal
- */
-unload: mjs_unload, } = mjs_signalExitWrap(mjs_processOk(dist_mjs_process) ? new mjs_SignalExit(dist_mjs_process) : new mjs_SignalExitFallback());
-//# sourceMappingURL=index.js.map
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/terminate/cleanup.js
-
-
-
-// If the `cleanup` option is used, call `subprocess.kill()` when the parent process exits
-const cleanupOnExit = (subprocess, {cleanup, detached}, {signal}) => {
-	if (!cleanup || detached) {
-		return;
-	}
-
-	const removeExitHandler = mjs_onExit(() => {
-		subprocess.kill();
-	});
-	(0,external_node_events_.addAbortListener)(signal, () => {
-		removeExitHandler();
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/pipe-arguments.js
-
-
-
-
-
-// Normalize and validate arguments passed to `source.pipe(destination)`
-const normalizePipeArguments = ({source, sourcePromise, boundOptions, createNested}, ...pipeArguments) => {
-	const startTime = getStartTime();
-	const {
-		destination,
-		destinationStream,
-		destinationError,
-		from,
-		unpipeSignal,
-	} = getDestinationStream(boundOptions, createNested, pipeArguments);
-	const {sourceStream, sourceError} = getSourceStream(source, from);
-	const {options: sourceOptions, fileDescriptors} = SUBPROCESS_OPTIONS.get(source);
-	return {
-		sourcePromise,
-		sourceStream,
-		sourceOptions,
-		sourceError,
-		destination,
-		destinationStream,
-		destinationError,
-		unpipeSignal,
-		fileDescriptors,
-		startTime,
-	};
-};
-
-const getDestinationStream = (boundOptions, createNested, pipeArguments) => {
-	try {
-		const {
-			destination,
-			pipeOptions: {from, to, unpipeSignal} = {},
-		} = getDestination(boundOptions, createNested, ...pipeArguments);
-		const destinationStream = getToStream(destination, to);
-		return {
-			destination,
-			destinationStream,
-			from,
-			unpipeSignal,
-		};
-	} catch (error) {
-		return {destinationError: error};
-	}
-};
-
-// Piping subprocesses can use three syntaxes:
-//  - source.pipe('command', commandArguments, pipeOptionsOrDestinationOptions)
-//  - source.pipe`command commandArgument` or source.pipe(pipeOptionsOrDestinationOptions)`command commandArgument`
-//  - source.pipe(execa(...), pipeOptions)
-const getDestination = (boundOptions, createNested, firstArgument, ...pipeArguments) => {
-	if (Array.isArray(firstArgument)) {
-		const destination = createNested(mapDestinationArguments, boundOptions)(firstArgument, ...pipeArguments);
-		return {destination, pipeOptions: boundOptions};
-	}
-
-	if (typeof firstArgument === 'string' || firstArgument instanceof URL || isDenoExecPath(firstArgument)) {
-		if (Object.keys(boundOptions).length > 0) {
-			throw new TypeError('Please use .pipe("file", ..., options) or .pipe(execa("file", ..., options)) instead of .pipe(options)("file", ...).');
-		}
-
-		const [rawFile, rawArguments, rawOptions] = normalizeParameters(firstArgument, ...pipeArguments);
-		const destination = createNested(mapDestinationArguments)(rawFile, rawArguments, rawOptions);
-		return {destination, pipeOptions: rawOptions};
-	}
-
-	if (SUBPROCESS_OPTIONS.has(firstArgument)) {
-		if (Object.keys(boundOptions).length > 0) {
-			throw new TypeError('Please use .pipe(options)`command` or .pipe($(options)`command`) instead of .pipe(options)($`command`).');
-		}
-
-		return {destination: firstArgument, pipeOptions: pipeArguments[0]};
-	}
-
-	throw new TypeError(`The first argument must be a template string, an options object, or an Execa subprocess: ${firstArgument}`);
-};
-
-// Force `stdin: 'pipe'` with the destination subprocess
-const mapDestinationArguments = ({options}) => ({options: {...options, stdin: 'pipe', piped: true}});
-
-const getSourceStream = (source, from) => {
-	try {
-		const sourceStream = getFromStream(source, from);
-		return {sourceStream};
-	} catch (error) {
-		return {sourceError: error};
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/throw.js
-
-
-
-// When passing invalid arguments to `source.pipe()`, throw asynchronously.
-// We also abort both subprocesses.
-const handlePipeArgumentsError = ({
-	sourceStream,
-	sourceError,
-	destinationStream,
-	destinationError,
-	fileDescriptors,
-	sourceOptions,
-	startTime,
-}) => {
-	const error = getPipeArgumentsError({
-		sourceStream,
-		sourceError,
-		destinationStream,
-		destinationError,
-	});
-	if (error !== undefined) {
-		throw createNonCommandError({
-			error,
-			fileDescriptors,
-			sourceOptions,
-			startTime,
-		});
-	}
-};
-
-const getPipeArgumentsError = ({sourceStream, sourceError, destinationStream, destinationError}) => {
-	if (sourceError !== undefined && destinationError !== undefined) {
-		return destinationError;
-	}
-
-	if (destinationError !== undefined) {
-		abortSourceStream(sourceStream);
-		return destinationError;
-	}
-
-	if (sourceError !== undefined) {
-		endDestinationStream(destinationStream);
-		return sourceError;
-	}
-};
-
-// Specific error return value when passing invalid arguments to `subprocess.pipe()` or when using `unpipeSignal`
-const createNonCommandError = ({error, fileDescriptors, sourceOptions, startTime}) => makeEarlyError({
-	error,
-	command: PIPE_COMMAND_MESSAGE,
-	escapedCommand: PIPE_COMMAND_MESSAGE,
-	fileDescriptors,
-	options: sourceOptions,
-	startTime,
-	isSync: false,
-});
-
-const PIPE_COMMAND_MESSAGE = 'source.pipe(destination)';
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/sequence.js
-// Like Bash, we await both subprocesses. This is unlike some other shells which only await the destination subprocess.
-// Like Bash with the `pipefail` option, if either subprocess fails, the whole pipe fails.
-// Like Bash, if both subprocesses fail, we return the failure of the destination.
-// This ensures both subprocesses' errors are present, using `error.pipedFrom`.
-const waitForBothSubprocesses = async subprocessPromises => {
-	const [
-		{status: sourceStatus, reason: sourceReason, value: sourceResult = sourceReason},
-		{status: destinationStatus, reason: destinationReason, value: destinationResult = destinationReason},
-	] = await subprocessPromises;
-
-	if (!destinationResult.pipedFrom.includes(sourceResult)) {
-		destinationResult.pipedFrom.push(sourceResult);
-	}
-
-	if (destinationStatus === 'rejected') {
-		throw destinationResult;
-	}
-
-	if (sourceStatus === 'rejected') {
-		throw sourceResult;
-	}
-
-	return destinationResult;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/streaming.js
-
-
-
-
-
-// The piping behavior is like Bash.
-// In particular, when one subprocess exits, the other is not terminated by a signal.
-// Instead, its stdout (for the source) or stdin (for the destination) closes.
-// If the subprocess uses it, it will make it error with SIGPIPE or EPIPE (for the source) or end (for the destination).
-// If it does not use it, it will continue running.
-// This allows for subprocesses to gracefully exit and lower the coupling between subprocesses.
-const pipeSubprocessStream = (sourceStream, destinationStream, maxListenersController) => {
-	const mergedStream = MERGED_STREAMS.has(destinationStream)
-		? pipeMoreSubprocessStream(sourceStream, destinationStream)
-		: pipeFirstSubprocessStream(sourceStream, destinationStream);
-	incrementMaxListeners(sourceStream, SOURCE_LISTENERS_PER_PIPE, maxListenersController.signal);
-	incrementMaxListeners(destinationStream, DESTINATION_LISTENERS_PER_PIPE, maxListenersController.signal);
-	cleanupMergedStreamsMap(destinationStream);
-	return mergedStream;
-};
-
-// We use `merge-streams` to allow for multiple sources to pipe to the same destination.
-const pipeFirstSubprocessStream = (sourceStream, destinationStream) => {
-	const mergedStream = merge_streams_mergeStreams([sourceStream]);
-	pipeStreams(mergedStream, destinationStream);
-	MERGED_STREAMS.set(destinationStream, mergedStream);
-	return mergedStream;
-};
-
-const pipeMoreSubprocessStream = (sourceStream, destinationStream) => {
-	const mergedStream = MERGED_STREAMS.get(destinationStream);
-	mergedStream.add(sourceStream);
-	return mergedStream;
-};
-
-const cleanupMergedStreamsMap = async destinationStream => {
-	try {
-		await (0,external_node_stream_promises_namespaceObject.finished)(destinationStream, {cleanup: true, readable: false, writable: true});
-	} catch {}
-
-	MERGED_STREAMS.delete(destinationStream);
-};
-
-const MERGED_STREAMS = new WeakMap();
-
-// Number of listeners set up on `sourceStream` by each `sourceStream.pipe(destinationStream)`
-// Those are added by `merge-streams`
-const SOURCE_LISTENERS_PER_PIPE = 2;
-// Number of listeners set up on `destinationStream` by each `sourceStream.pipe(destinationStream)`
-// Those are added by `finished()` in `cleanupMergedStreamsMap()`
-const DESTINATION_LISTENERS_PER_PIPE = 1;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/abort.js
-
-
-
-// When passing an `unpipeSignal` option, abort piping when the signal is aborted.
-// However, do not terminate the subprocesses.
-const unpipeOnAbort = (unpipeSignal, unpipeContext) => unpipeSignal === undefined
-	? []
-	: [unpipeOnSignalAbort(unpipeSignal, unpipeContext)];
-
-const unpipeOnSignalAbort = async (unpipeSignal, {sourceStream, mergedStream, fileDescriptors, sourceOptions, startTime}) => {
-	await (0,external_node_util_.aborted)(unpipeSignal, sourceStream);
-	await mergedStream.remove(sourceStream);
-	const error = new Error('Pipe canceled by `unpipeSignal` option.');
-	throw createNonCommandError({
-		error,
-		fileDescriptors,
-		sourceOptions,
-		startTime,
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/pipe/setup.js
-
-
-
-
-
-
-
-// Pipe a subprocess' `stdout`/`stderr`/`stdio` into another subprocess' `stdin`
-const pipeToSubprocess = (sourceInfo, ...pipeArguments) => {
-	if (is_plain_obj_isPlainObject(pipeArguments[0])) {
-		return pipeToSubprocess.bind(undefined, {
-			...sourceInfo,
-			boundOptions: {...sourceInfo.boundOptions, ...pipeArguments[0]},
-		});
-	}
-
-	const {destination, ...normalizedInfo} = normalizePipeArguments(sourceInfo, ...pipeArguments);
-	const promise = handlePipePromise({...normalizedInfo, destination});
-	promise.pipe = pipeToSubprocess.bind(undefined, {
-		...sourceInfo,
-		source: destination,
-		sourcePromise: promise,
-		boundOptions: {},
-	});
-	return promise;
-};
-
-// Asynchronous logic when piping subprocesses
-const handlePipePromise = async ({
-	sourcePromise,
-	sourceStream,
-	sourceOptions,
-	sourceError,
-	destination,
-	destinationStream,
-	destinationError,
-	unpipeSignal,
-	fileDescriptors,
-	startTime,
-}) => {
-	const subprocessPromises = getSubprocessPromises(sourcePromise, destination);
-	handlePipeArgumentsError({
-		sourceStream,
-		sourceError,
-		destinationStream,
-		destinationError,
-		fileDescriptors,
-		sourceOptions,
-		startTime,
-	});
-	const maxListenersController = new AbortController();
-	try {
-		const mergedStream = pipeSubprocessStream(sourceStream, destinationStream, maxListenersController);
-		return await Promise.race([
-			waitForBothSubprocesses(subprocessPromises),
-			...unpipeOnAbort(unpipeSignal, {
-				sourceStream,
-				mergedStream,
-				sourceOptions,
-				fileDescriptors,
-				startTime,
-			}),
-		]);
-	} finally {
-		maxListenersController.abort();
-	}
-};
-
-// `.pipe()` awaits the subprocess promises.
-// When invalid arguments are passed to `.pipe()`, we throw an error, which prevents awaiting them.
-// We need to ensure this does not create unhandled rejections.
-const getSubprocessPromises = (sourcePromise, destination) => Promise.allSettled([sourcePromise, destination]);
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/utils.js
-const utils_identity = value => value;
-
-const source_utils_noop = () => undefined;
-
-const getContentsProperty = ({contents}) => contents;
-
-const utils_throwObjectStream = chunk => {
-	throw new Error(`Streams in object mode are not supported: ${String(chunk)}`);
-};
-
-const getLengthProperty = convertedChunk => convertedChunk.length;
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/array.js
-
-
-
-async function array_getStreamAsArray(stream, options) {
-	return source_contents_getStreamContents(stream, array_arrayMethods, options);
-}
-
-const array_initArray = () => ({contents: []});
-
-const array_increment = () => 1;
-
-const array_addArrayChunk = (convertedChunk, {contents}) => {
-	contents.push(convertedChunk);
-	return contents;
-};
-
-const array_arrayMethods = {
-	init: array_initArray,
-	convertChunk: {
-		string: utils_identity,
-		buffer: utils_identity,
-		arrayBuffer: utils_identity,
-		dataView: utils_identity,
-		typedArray: utils_identity,
-		others: utils_identity,
-	},
-	getSize: array_increment,
-	truncateChunk: source_utils_noop,
-	addChunk: array_addArrayChunk,
-	getFinalChunk: source_utils_noop,
-	finalize: getContentsProperty,
-};
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/array-buffer.js
-
-
-
-async function array_buffer_getStreamAsArrayBuffer(stream, options) {
-	return source_contents_getStreamContents(stream, array_buffer_arrayBufferMethods, options);
-}
-
-const array_buffer_initArrayBuffer = () => ({contents: new ArrayBuffer(0)});
-
-const array_buffer_useTextEncoder = chunk => array_buffer_textEncoder.encode(chunk);
-const array_buffer_textEncoder = new TextEncoder();
-
-const array_buffer_useUint8Array = chunk => new Uint8Array(chunk);
-
-const array_buffer_useUint8ArrayWithOffset = chunk => new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-
-const array_buffer_truncateArrayBufferChunk = (convertedChunk, chunkSize) => convertedChunk.slice(0, chunkSize);
-
-// `contents` is an increasingly growing `Uint8Array`.
-const array_buffer_addArrayBufferChunk = (convertedChunk, {contents, length: previousLength}, length) => {
-	const newContents = array_buffer_hasArrayBufferResize() ? array_buffer_resizeArrayBuffer(contents, length) : array_buffer_resizeArrayBufferSlow(contents, length);
-	new Uint8Array(newContents).set(convertedChunk, previousLength);
-	return newContents;
-};
-
-// Without `ArrayBuffer.resize()`, `contents` size is always a power of 2.
-// This means its last bytes are zeroes (not stream data), which need to be
-// trimmed at the end with `ArrayBuffer.slice()`.
-const array_buffer_resizeArrayBufferSlow = (contents, length) => {
-	if (length <= contents.byteLength) {
-		return contents;
-	}
-
-	const arrayBuffer = new ArrayBuffer(array_buffer_getNewContentsLength(length));
-	new Uint8Array(arrayBuffer).set(new Uint8Array(contents), 0);
-	return arrayBuffer;
-};
-
-// With `ArrayBuffer.resize()`, `contents` size matches exactly the size of
-// the stream data. It does not include extraneous zeroes to trim at the end.
-// The underlying `ArrayBuffer` does allocate a number of bytes that is a power
-// of 2, but those bytes are only visible after calling `ArrayBuffer.resize()`.
-const array_buffer_resizeArrayBuffer = (contents, length) => {
-	if (length <= contents.maxByteLength) {
-		contents.resize(length);
-		return contents;
-	}
-
-	const arrayBuffer = new ArrayBuffer(length, {maxByteLength: array_buffer_getNewContentsLength(length)});
-	new Uint8Array(arrayBuffer).set(new Uint8Array(contents), 0);
-	return arrayBuffer;
-};
-
-// Retrieve the closest `length` that is both >= and a power of 2
-const array_buffer_getNewContentsLength = length => array_buffer_SCALE_FACTOR ** Math.ceil(Math.log(length) / Math.log(array_buffer_SCALE_FACTOR));
-
-const array_buffer_SCALE_FACTOR = 2;
-
-const array_buffer_finalizeArrayBuffer = ({contents, length}) => array_buffer_hasArrayBufferResize() ? contents : contents.slice(0, length);
-
-// `ArrayBuffer.slice()` is slow. When `ArrayBuffer.resize()` is available
-// (Node >=20.0.0, Safari >=16.4 and Chrome), we can use it instead.
-// eslint-disable-next-line no-warning-comments
-// TODO: remove after dropping support for Node 20.
-// eslint-disable-next-line no-warning-comments
-// TODO: use `ArrayBuffer.transferToFixedLength()` instead once it is available
-const array_buffer_hasArrayBufferResize = () => 'resize' in ArrayBuffer.prototype;
-
-const array_buffer_arrayBufferMethods = {
-	init: array_buffer_initArrayBuffer,
-	convertChunk: {
-		string: array_buffer_useTextEncoder,
-		buffer: array_buffer_useUint8Array,
-		arrayBuffer: array_buffer_useUint8Array,
-		dataView: array_buffer_useUint8ArrayWithOffset,
-		typedArray: array_buffer_useUint8ArrayWithOffset,
-		others: utils_throwObjectStream,
-	},
-	getSize: getLengthProperty,
-	truncateChunk: array_buffer_truncateArrayBufferChunk,
-	addChunk: array_buffer_addArrayBufferChunk,
-	getFinalChunk: source_utils_noop,
-	finalize: array_buffer_finalizeArrayBuffer,
-};
-
-;// CONCATENATED MODULE: ./node_modules/get-stream/source/string.js
-
-
-
-async function string_getStreamAsString(stream, options) {
-	return source_contents_getStreamContents(stream, string_stringMethods, options);
-}
-
-const string_initString = () => ({contents: '', textDecoder: new TextDecoder()});
-
-const string_useTextDecoder = (chunk, {textDecoder}) => textDecoder.decode(chunk, {stream: true});
-
-const string_addStringChunk = (convertedChunk, {contents}) => contents + convertedChunk;
-
-const string_truncateStringChunk = (convertedChunk, chunkSize) => convertedChunk.slice(0, chunkSize);
-
-const string_getFinalStringChunk = ({textDecoder}) => {
-	const finalChunk = textDecoder.decode();
-	return finalChunk === '' ? undefined : finalChunk;
-};
-
-const string_stringMethods = {
-	init: string_initString,
-	convertChunk: {
-		string: utils_identity,
-		buffer: string_useTextDecoder,
-		arrayBuffer: string_useTextDecoder,
-		dataView: string_useTextDecoder,
-		typedArray: string_useTextDecoder,
-		others: utils_throwObjectStream,
-	},
-	getSize: getLengthProperty,
-	truncateChunk: string_truncateStringChunk,
-	addChunk: string_addStringChunk,
-	getFinalChunk: string_getFinalStringChunk,
-	finalize: getContentsProperty,
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/iterate.js
-
-
-
-
-
-
-// Iterate over lines of `subprocess.stdout`, used by `subprocess.readable|duplex|iterable()`
-const iterateOnSubprocessStream = ({subprocessStdout, subprocess, binary, shouldEncode, encoding, preserveNewlines}) => {
-	const controller = new AbortController();
-	stopReadingOnExit(subprocess, controller);
-	return iterateOnStream({
-		stream: subprocessStdout,
-		controller,
-		binary,
-		shouldEncode: !subprocessStdout.readableObjectMode && shouldEncode,
-		encoding,
-		shouldSplit: !subprocessStdout.readableObjectMode,
-		preserveNewlines,
-	});
-};
-
-const stopReadingOnExit = async (subprocess, controller) => {
-	try {
-		await subprocess;
-	} catch {} finally {
-		controller.abort();
-	}
-};
-
-// Iterate over lines of `subprocess.stdout`, used by `result.stdout` and the `verbose: 'full'` option.
-// Applies the `lines` and `encoding` options.
-const iterateForResult = ({stream, onStreamEnd, lines, encoding, stripFinalNewline, allMixed}) => {
-	const controller = new AbortController();
-	stopReadingOnStreamEnd(onStreamEnd, controller, stream);
-	const objectMode = stream.readableObjectMode && !allMixed;
-	return iterateOnStream({
-		stream,
-		controller,
-		binary: encoding === 'buffer',
-		shouldEncode: !objectMode,
-		encoding,
-		shouldSplit: !objectMode && lines,
-		preserveNewlines: !stripFinalNewline,
-	});
-};
-
-const stopReadingOnStreamEnd = async (onStreamEnd, controller, stream) => {
-	try {
-		await onStreamEnd;
-	} catch {
-		stream.destroy();
-	} finally {
-		controller.abort();
-	}
-};
-
-const iterateOnStream = ({stream, controller, binary, shouldEncode, encoding, shouldSplit, preserveNewlines}) => {
-	const onStdoutChunk = (0,external_node_events_.on)(stream, 'data', {
-		signal: controller.signal,
-		highWaterMark: HIGH_WATER_MARK,
-		// Backward compatibility with older name for this option
-		// See https://github.com/nodejs/node/pull/52080#discussion_r1525227861
-		// @todo Remove after removing support for Node 21
-		highWatermark: HIGH_WATER_MARK,
-	});
-	return iterateOnData({
-		onStdoutChunk,
-		controller,
-		binary,
-		shouldEncode,
-		encoding,
-		shouldSplit,
-		preserveNewlines,
-	});
-};
-
-const DEFAULT_OBJECT_HIGH_WATER_MARK = (0,external_node_stream_.getDefaultHighWaterMark)(true);
-
-// The `highWaterMark` of `events.on()` is measured in number of events, not in bytes.
-// Not knowing the average amount of bytes per `data` event, we use the same heuristic as streams in objectMode, since they have the same issue.
-// Therefore, we use the value of `getDefaultHighWaterMark(true)`.
-// Note: this option does not exist on Node 18, but this is ok since the logic works without it. It just consumes more memory.
-const HIGH_WATER_MARK = DEFAULT_OBJECT_HIGH_WATER_MARK;
-
-const iterateOnData = async function * ({onStdoutChunk, controller, binary, shouldEncode, encoding, shouldSplit, preserveNewlines}) {
-	const generators = getGenerators({
-		binary,
-		shouldEncode,
-		encoding,
-		shouldSplit,
-		preserveNewlines,
-	});
-
-	try {
-		for await (const [chunk] of onStdoutChunk) {
-			yield * transformChunkSync(chunk, generators, 0);
-		}
-	} catch (error) {
-		if (!controller.signal.aborted) {
-			throw error;
-		}
-	} finally {
-		yield * finalChunksSync(generators);
-	}
-};
-
-const getGenerators = ({binary, shouldEncode, encoding, shouldSplit, preserveNewlines}) => [
-	getEncodingTransformGenerator(binary, encoding, !shouldEncode),
-	getSplitLinesGenerator(binary, preserveNewlines, !shouldSplit, {}),
-].filter(Boolean);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/io/contents.js
-
-
-
-
-
-
-
-
-// Retrieve `result.stdout|stderr|all|stdio[*]`
-const getStreamOutput = async ({stream, onStreamEnd, fdNumber, encoding, buffer, maxBuffer, lines, allMixed, stripFinalNewline, verboseInfo, streamInfo}) => {
-	const logPromise = logOutputAsync({
-		stream,
-		onStreamEnd,
-		fdNumber,
-		encoding,
-		allMixed,
-		verboseInfo,
-		streamInfo,
-	});
-
-	if (!buffer) {
-		await Promise.all([resumeStream(stream), logPromise]);
-		return;
-	}
-
-	const stripFinalNewlineValue = getStripFinalNewline(stripFinalNewline, fdNumber);
-	const iterable = iterateForResult({
-		stream,
-		onStreamEnd,
-		lines,
-		encoding,
-		stripFinalNewline: stripFinalNewlineValue,
-		allMixed,
-	});
-	const [output] = await Promise.all([
-		io_contents_getStreamContents({
-			stream,
-			iterable,
-			fdNumber,
-			encoding,
-			maxBuffer,
-			lines,
-		}),
-		logPromise,
-	]);
-	return output;
-};
-
-const logOutputAsync = async ({stream, onStreamEnd, fdNumber, encoding, allMixed, verboseInfo, streamInfo: {fileDescriptors}}) => {
-	if (!shouldLogOutput({
-		stdioItems: fileDescriptors[fdNumber]?.stdioItems,
-		encoding,
-		verboseInfo,
-		fdNumber,
-	})) {
-		return;
-	}
-
-	const linesIterable = iterateForResult({
-		stream,
-		onStreamEnd,
-		lines: true,
-		encoding,
-		stripFinalNewline: true,
-		allMixed,
-	});
-	await logLines(linesIterable, stream, fdNumber, verboseInfo);
-};
-
-// When using `buffer: false`, users need to read `subprocess.stdout|stderr|all` right away
-// See https://github.com/sindresorhus/execa/issues/730 and https://github.com/sindresorhus/execa/pull/729#discussion_r1465496310
-const resumeStream = async stream => {
-	await (0,external_node_timers_promises_namespaceObject.setImmediate)();
-	if (stream.readableFlowing === null) {
-		stream.resume();
-	}
-};
-
-const io_contents_getStreamContents = async ({stream, stream: {readableObjectMode}, iterable, fdNumber, encoding, maxBuffer, lines}) => {
-	try {
-		if (readableObjectMode || lines) {
-			return await array_getStreamAsArray(iterable, {maxBuffer});
-		}
-
-		if (encoding === 'buffer') {
-			return new Uint8Array(await array_buffer_getStreamAsArrayBuffer(iterable, {maxBuffer}));
-		}
-
-		return await string_getStreamAsString(iterable, {maxBuffer});
-	} catch (error) {
-		return handleBufferedData(handleMaxBuffer({
-			error,
-			stream,
-			readableObjectMode,
-			lines,
-			encoding,
-			fdNumber,
-		}));
-	}
-};
-
-// On failure, `result.stdout|stderr|all` should contain the currently buffered stream
-// They are automatically closed and flushed by Node.js when the subprocess exits
-// When `buffer` is `false`, `streamPromise` is `undefined` and there is no buffered data to retrieve
-const contents_getBufferedData = async streamPromise => {
-	try {
-		return await streamPromise;
-	} catch (error) {
-		return handleBufferedData(error);
-	}
-};
-
-// Ensure we are returning Uint8Arrays when using `encoding: 'buffer'`
-const handleBufferedData = ({bufferedData}) => uint_array_isArrayBuffer(bufferedData)
-	? new Uint8Array(bufferedData)
-	: bufferedData;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/wait-stream.js
-
-
-// Wraps `finished(stream)` to handle the following case:
-//  - When the subprocess exits, Node.js automatically calls `subprocess.stdin.destroy()`, which we need to ignore.
-//  - However, we still need to throw if `subprocess.stdin.destroy()` is called before subprocess exit.
-const waitForStream = async (stream, fdNumber, streamInfo, {isSameDirection, stopOnExit = false} = {}) => {
-	const state = handleStdinDestroy(stream, streamInfo);
-	const abortController = new AbortController();
-	try {
-		await Promise.race([
-			...(stopOnExit ? [streamInfo.exitPromise] : []),
-			(0,external_node_stream_promises_namespaceObject.finished)(stream, {cleanup: true, signal: abortController.signal}),
-		]);
-	} catch (error) {
-		if (!state.stdinCleanedUp) {
-			handleStreamError(error, fdNumber, streamInfo, isSameDirection);
-		}
-	} finally {
-		abortController.abort();
-	}
-};
-
-// If `subprocess.stdin` is destroyed before being fully written to, it is considered aborted and should throw an error.
-// This can happen for example when user called `subprocess.stdin.destroy()` before `subprocess.stdin.end()`.
-// However, Node.js calls `subprocess.stdin.destroy()` on exit for cleanup purposes.
-// https://github.com/nodejs/node/blob/0b4cdb4b42956cbd7019058e409e06700a199e11/lib/internal/child_process.js#L278
-// This is normal and should not throw an error.
-// Therefore, we need to differentiate between both situations to know whether to throw an error.
-// Unfortunately, events (`close`, `error`, `end`, `exit`) cannot be used because `.destroy()` can take an arbitrary amount of time.
-// For example, `stdin: 'pipe'` is implemented as a TCP socket, and its `.destroy()` method waits for TCP disconnection.
-// Therefore `.destroy()` might end before or after subprocess exit, based on OS speed and load.
-// The only way to detect this is to spy on `subprocess.stdin._destroy()` by wrapping it.
-// If `subprocess.exitCode` or `subprocess.signalCode` is set, it means `.destroy()` is being called by Node.js itself.
-const handleStdinDestroy = (stream, {originalStreams: [originalStdin], subprocess}) => {
-	const state = {stdinCleanedUp: false};
-	if (stream === originalStdin) {
-		spyOnStdinDestroy(stream, subprocess, state);
-	}
-
-	return state;
-};
-
-const spyOnStdinDestroy = (subprocessStdin, subprocess, state) => {
-	const {_destroy} = subprocessStdin;
-	subprocessStdin._destroy = (...destroyArguments) => {
-		setStdinCleanedUp(subprocess, state);
-		_destroy.call(subprocessStdin, ...destroyArguments);
-	};
-};
-
-const setStdinCleanedUp = ({exitCode, signalCode}, state) => {
-	if (exitCode !== null || signalCode !== null) {
-		state.stdinCleanedUp = true;
-	}
-};
-
-// We ignore EPIPEs on writable streams and aborts on readable streams since those can happen normally.
-// When one stream errors, the error is propagated to the other streams on the same file descriptor.
-// Those other streams might have a different direction due to the above.
-// When this happens, the direction of both the initial stream and the others should then be taken into account.
-// Therefore, we keep track of whether a stream error is currently propagating.
-const handleStreamError = (error, fdNumber, streamInfo, isSameDirection) => {
-	if (!shouldIgnoreStreamError(error, fdNumber, streamInfo, isSameDirection)) {
-		throw error;
-	}
-};
-
-const shouldIgnoreStreamError = (error, fdNumber, streamInfo, isSameDirection = true) => {
-	if (streamInfo.propagating) {
-		return isStreamEpipe(error) || isStreamAbort(error);
-	}
-
-	streamInfo.propagating = true;
-	return isInputFileDescriptor(streamInfo, fdNumber) === isSameDirection
-		? isStreamEpipe(error)
-		: isStreamAbort(error);
-};
-
-// Unfortunately, we cannot use the stream's class or properties to know whether it is readable or writable.
-// For example, `subprocess.stdin` is technically a Duplex, but can only be used as a writable.
-// Therefore, we need to use the file descriptor's direction (`stdin` is input, `stdout` is output, etc.).
-// However, while `subprocess.std*` and transforms follow that direction, any stream passed the `std*` option has the opposite direction.
-// For example, `subprocess.stdin` is a writable, but the `stdin` option is a readable.
-const isInputFileDescriptor = ({fileDescriptors}, fdNumber) => fdNumber !== 'all' && fileDescriptors[fdNumber].direction === 'input';
-
-// When `stream.destroy()` is called without an `error` argument, stream is aborted.
-// This is the only way to abort a readable stream, which can be useful in some instances.
-// Therefore, we ignore this error on readable streams.
-const isStreamAbort = error => error?.code === 'ERR_STREAM_PREMATURE_CLOSE';
-
-// When `stream.write()` is called but the underlying source has been closed, `EPIPE` is emitted.
-// When piping subprocesses, the source subprocess usually decides when to stop piping.
-// However, there are some instances when the destination does instead, such as `... | head -n1`.
-// It notifies the source by using `EPIPE`.
-// Therefore, we ignore this error on writable streams.
-const isStreamEpipe = error => error?.code === 'EPIPE';
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/stdio.js
-
-
-
-// Read the contents of `subprocess.std*` and|or wait for its completion
-const waitForStdioStreams = ({subprocess, encoding, buffer, maxBuffer, lines, stripFinalNewline, verboseInfo, streamInfo}) => subprocess.stdio.map((stream, fdNumber) => waitForSubprocessStream({
-	stream,
-	fdNumber,
-	encoding,
-	buffer: buffer[fdNumber],
-	maxBuffer: maxBuffer[fdNumber],
-	lines: lines[fdNumber],
-	allMixed: false,
-	stripFinalNewline,
-	verboseInfo,
-	streamInfo,
-}));
-
-// Read the contents of `subprocess.std*` or `subprocess.all` and|or wait for its completion
-const waitForSubprocessStream = async ({stream, fdNumber, encoding, buffer, maxBuffer, lines, allMixed, stripFinalNewline, verboseInfo, streamInfo}) => {
-	if (!stream) {
-		return;
-	}
-
-	const onStreamEnd = waitForStream(stream, fdNumber, streamInfo);
-	if (isInputFileDescriptor(streamInfo, fdNumber)) {
-		await onStreamEnd;
-		return;
-	}
-
-	const [output] = await Promise.all([
-		getStreamOutput({
-			stream,
-			onStreamEnd,
-			fdNumber,
-			encoding,
-			buffer,
-			maxBuffer,
-			lines,
-			allMixed,
-			stripFinalNewline,
-			verboseInfo,
-			streamInfo,
-		}),
-		onStreamEnd,
-	]);
-	return output;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/all-async.js
-
-
-
-// `all` interleaves `stdout` and `stderr`
-const all_async_makeAllStream = ({stdout, stderr}, {all}) => all && (stdout || stderr)
-	? merge_streams_mergeStreams([stdout, stderr].filter(Boolean))
-	: undefined;
-
-// Read the contents of `subprocess.all` and|or wait for its completion
-const waitForAllStream = ({subprocess, encoding, buffer, maxBuffer, lines, stripFinalNewline, verboseInfo, streamInfo}) => waitForSubprocessStream({
-	...getAllStream(subprocess, buffer),
-	fdNumber: 'all',
-	encoding,
-	maxBuffer: maxBuffer[1] + maxBuffer[2],
-	lines: lines[1] || lines[2],
-	allMixed: getAllMixed(subprocess),
-	stripFinalNewline,
-	verboseInfo,
-	streamInfo,
-});
-
-const getAllStream = ({stdout, stderr, all}, [, bufferStdout, bufferStderr]) => {
-	const buffer = bufferStdout || bufferStderr;
-	if (!buffer) {
-		return {stream: all, buffer};
-	}
-
-	if (!bufferStdout) {
-		return {stream: stderr, buffer};
-	}
-
-	if (!bufferStderr) {
-		return {stream: stdout, buffer};
-	}
-
-	return {stream: all, buffer};
-};
-
-// When `subprocess.stdout` is in objectMode but not `subprocess.stderr` (or the opposite), we need to use both:
-//  - `getStreamAsArray()` for the chunks in objectMode, to return as an array without changing each chunk
-//  - `getStreamAsArrayBuffer()` or `getStream()` for the chunks not in objectMode, to convert them from Buffers to string or Uint8Array
-// We do this by emulating the Buffer -> string|Uint8Array conversion performed by `get-stream` with our own, which is identical.
-const getAllMixed = ({all, stdout, stderr}) => all
-	&& stdout
-	&& stderr
-	&& stdout.readableObjectMode !== stderr.readableObjectMode;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/verbose/ipc.js
-
-
-
-// When `verbose` is `'full'`, print IPC messages from the subprocess
-const shouldLogIpc = verboseInfo => isFullVerbose(verboseInfo, 'ipc');
-
-const logIpcOutput = (message, verboseInfo) => {
-	const verboseMessage = serializeVerboseMessage(message);
-	verboseLog({
-		type: 'ipc',
-		verboseMessage,
-		fdNumber: 'ipc',
-		verboseInfo,
-	});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/ipc/buffer-messages.js
-
-
-
-
-
-// Iterate through IPC messages sent by the subprocess
-const waitForIpcOutput = async ({
-	subprocess,
-	buffer: bufferArray,
-	maxBuffer: maxBufferArray,
-	ipc,
-	ipcOutput,
-	verboseInfo,
-}) => {
-	if (!ipc) {
-		return ipcOutput;
-	}
-
-	const isVerbose = shouldLogIpc(verboseInfo);
-	const buffer = getFdSpecificValue(bufferArray, 'ipc');
-	const maxBuffer = getFdSpecificValue(maxBufferArray, 'ipc');
-
-	for await (const message of loopOnMessages({
-		anyProcess: subprocess,
-		channel: subprocess.channel,
-		isSubprocess: false,
-		ipc,
-		shouldAwait: false,
-		reference: true,
-	})) {
-		if (buffer) {
-			checkIpcMaxBuffer(subprocess, ipcOutput, maxBuffer);
-			ipcOutput.push(message);
-		}
-
-		if (isVerbose) {
-			logIpcOutput(message, verboseInfo);
-		}
-	}
-
-	return ipcOutput;
-};
-
-const getBufferedIpcOutput = async (ipcOutputPromise, ipcOutput) => {
-	await Promise.allSettled([ipcOutputPromise]);
-	return ipcOutput;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/resolve/wait-subprocess.js
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Retrieve result of subprocess: exit code, signal, error, streams (stdout/stderr/all)
-const waitForSubprocessResult = async ({
-	subprocess,
-	options: {
-		encoding,
-		buffer,
-		maxBuffer,
-		lines,
-		timeoutDuration: timeout,
-		cancelSignal,
-		gracefulCancel,
-		forceKillAfterDelay,
-		stripFinalNewline,
-		ipc,
-		ipcInput,
-	},
-	context,
-	verboseInfo,
-	fileDescriptors,
-	originalStreams,
-	onInternalError,
-	controller,
-}) => {
-	const exitPromise = waitForExit(subprocess, context);
-	const streamInfo = {
-		originalStreams,
-		fileDescriptors,
-		subprocess,
-		exitPromise,
-		propagating: false,
-	};
-
-	const stdioPromises = waitForStdioStreams({
-		subprocess,
-		encoding,
-		buffer,
-		maxBuffer,
-		lines,
-		stripFinalNewline,
-		verboseInfo,
-		streamInfo,
-	});
-	const allPromise = waitForAllStream({
-		subprocess,
-		encoding,
-		buffer,
-		maxBuffer,
-		lines,
-		stripFinalNewline,
-		verboseInfo,
-		streamInfo,
-	});
-	const ipcOutput = [];
-	const ipcOutputPromise = waitForIpcOutput({
-		subprocess,
-		buffer,
-		maxBuffer,
-		ipc,
-		ipcOutput,
-		verboseInfo,
-	});
-	const originalPromises = waitForOriginalStreams(originalStreams, subprocess, streamInfo);
-	const customStreamsEndPromises = waitForCustomStreamsEnd(fileDescriptors, streamInfo);
-
-	try {
-		return await Promise.race([
-			Promise.all([
-				{},
-				waitForSuccessfulExit(exitPromise),
-				Promise.all(stdioPromises),
-				allPromise,
-				ipcOutputPromise,
-				sendIpcInput(subprocess, ipcInput),
-				...originalPromises,
-				...customStreamsEndPromises,
-			]),
-			onInternalError,
-			throwOnSubprocessError(subprocess, controller),
-			...throwOnTimeout(subprocess, timeout, context, controller),
-			...throwOnCancel({
-				subprocess,
-				cancelSignal,
-				gracefulCancel,
-				context,
-				controller,
-			}),
-			...throwOnGracefulCancel({
-				subprocess,
-				cancelSignal,
-				gracefulCancel,
-				forceKillAfterDelay,
-				context,
-				controller,
-			}),
-		]);
-	} catch (error) {
-		context.terminationReason ??= 'other';
-		return Promise.all([
-			{error},
-			exitPromise,
-			Promise.all(stdioPromises.map(stdioPromise => contents_getBufferedData(stdioPromise))),
-			contents_getBufferedData(allPromise),
-			getBufferedIpcOutput(ipcOutputPromise, ipcOutput),
-			Promise.allSettled(originalPromises),
-			Promise.allSettled(customStreamsEndPromises),
-		]);
-	}
-};
-
-// Transforms replace `subprocess.std*`, which means they are not exposed to users.
-// However, we still want to wait for their completion.
-const waitForOriginalStreams = (originalStreams, subprocess, streamInfo) =>
-	originalStreams.map((stream, fdNumber) => stream === subprocess.stdio[fdNumber]
-		? undefined
-		: waitForStream(stream, fdNumber, streamInfo));
-
-// Some `stdin`/`stdout`/`stderr` options create a stream, e.g. when passing a file path.
-// The `.pipe()` method automatically ends that stream when `subprocess` ends.
-// This makes sure we wait for the completion of those streams, in order to catch any error.
-const waitForCustomStreamsEnd = (fileDescriptors, streamInfo) => fileDescriptors.flatMap(({stdioItems}, fdNumber) => stdioItems
-	.filter(({value, stream = value}) => is_stream_isStream(stream, {checkOpen: false}) && !isStandardStream(stream))
-	.map(({type, value, stream = value}) => waitForStream(stream, fdNumber, streamInfo, {
-		isSameDirection: TRANSFORM_TYPES.has(type),
-		stopOnExit: type === 'native',
-	})));
-
-// Fails when the subprocess emits an `error` event
-const throwOnSubprocessError = async (subprocess, {signal}) => {
-	const [error] = await (0,external_node_events_.once)(subprocess, 'error', {signal});
-	throw error;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/concurrent.js
-
-
-// When using multiple `.readable()`/`.writable()`/`.duplex()`, `final` and `destroy` should wait for other streams
-const initializeConcurrentStreams = () => ({
-	readableDestroy: new WeakMap(),
-	writableFinal: new WeakMap(),
-	writableDestroy: new WeakMap(),
-});
-
-// Each file descriptor + `waitName` has its own array of promises.
-// Each promise is a single `.readable()`/`.writable()`/`.duplex()` call.
-const addConcurrentStream = (concurrentStreams, stream, waitName) => {
-	const weakMap = concurrentStreams[waitName];
-	if (!weakMap.has(stream)) {
-		weakMap.set(stream, []);
-	}
-
-	const promises = weakMap.get(stream);
-	const promise = createDeferred();
-	promises.push(promise);
-	const resolve = promise.resolve.bind(promise);
-	return {resolve, promises};
-};
-
-// Wait for other streams, but stop waiting when subprocess ends
-const waitForConcurrentStreams = async ({resolve, promises}, subprocess) => {
-	resolve();
-	const [isSubprocessExit] = await Promise.race([
-		Promise.allSettled([true, subprocess]),
-		Promise.all([false, ...promises]),
-	]);
-	return !isSubprocessExit;
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/shared.js
-
-
-
-const safeWaitForSubprocessStdin = async subprocessStdin => {
-	if (subprocessStdin === undefined) {
-		return;
-	}
-
-	try {
-		await waitForSubprocessStdin(subprocessStdin);
-	} catch {}
-};
-
-const safeWaitForSubprocessStdout = async subprocessStdout => {
-	if (subprocessStdout === undefined) {
-		return;
-	}
-
-	try {
-		await waitForSubprocessStdout(subprocessStdout);
-	} catch {}
-};
-
-const waitForSubprocessStdin = async subprocessStdin => {
-	await (0,external_node_stream_promises_namespaceObject.finished)(subprocessStdin, {cleanup: true, readable: false, writable: true});
-};
-
-const waitForSubprocessStdout = async subprocessStdout => {
-	await (0,external_node_stream_promises_namespaceObject.finished)(subprocessStdout, {cleanup: true, readable: true, writable: false});
-};
-
-// When `readable` or `writable` aborts/errors, awaits the subprocess, for the reason mentioned above
-const waitForSubprocess = async (subprocess, error) => {
-	await subprocess;
-	if (error) {
-		throw error;
-	}
-};
-
-const destroyOtherStream = (stream, isOpen, error) => {
-	if (error && !isStreamAbort(error)) {
-		stream.destroy(error);
-	} else if (isOpen) {
-		stream.destroy();
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/readable.js
-
-
-
-
-
-
-
-
-
-// Create a `Readable` stream that forwards from `stdout` and awaits the subprocess
-const createReadable = ({subprocess, concurrentStreams, encoding}, {from, binary: binaryOption = true, preserveNewlines = true} = {}) => {
-	const binary = binaryOption || BINARY_ENCODINGS.has(encoding);
-	const {subprocessStdout, waitReadableDestroy} = getSubprocessStdout(subprocess, from, concurrentStreams);
-	const {readableEncoding, readableObjectMode, readableHighWaterMark} = getReadableOptions(subprocessStdout, binary);
-	const {read, onStdoutDataDone} = getReadableMethods({
-		subprocessStdout,
-		subprocess,
-		binary,
-		encoding,
-		preserveNewlines,
-	});
-	const readable = new external_node_stream_.Readable({
-		read,
-		destroy: (0,external_node_util_.callbackify)(onReadableDestroy.bind(undefined, {subprocessStdout, subprocess, waitReadableDestroy})),
-		highWaterMark: readableHighWaterMark,
-		objectMode: readableObjectMode,
-		encoding: readableEncoding,
-	});
-	onStdoutFinished({
-		subprocessStdout,
-		onStdoutDataDone,
-		readable,
-		subprocess,
-	});
-	return readable;
-};
-
-// Retrieve `stdout` (or other stream depending on `from`)
-const getSubprocessStdout = (subprocess, from, concurrentStreams) => {
-	const subprocessStdout = getFromStream(subprocess, from);
-	const waitReadableDestroy = addConcurrentStream(concurrentStreams, subprocessStdout, 'readableDestroy');
-	return {subprocessStdout, waitReadableDestroy};
-};
-
-const getReadableOptions = ({readableEncoding, readableObjectMode, readableHighWaterMark}, binary) => binary
-	? {readableEncoding, readableObjectMode, readableHighWaterMark}
-	: {readableEncoding, readableObjectMode: true, readableHighWaterMark: DEFAULT_OBJECT_HIGH_WATER_MARK};
-
-const getReadableMethods = ({subprocessStdout, subprocess, binary, encoding, preserveNewlines}) => {
-	const onStdoutDataDone = createDeferred();
-	const onStdoutData = iterateOnSubprocessStream({
-		subprocessStdout,
-		subprocess,
-		binary,
-		shouldEncode: !binary,
-		encoding,
-		preserveNewlines,
-	});
-
-	return {
-		read() {
-			onRead(this, onStdoutData, onStdoutDataDone);
-		},
-		onStdoutDataDone,
-	};
-};
-
-// Forwards data from `stdout` to `readable`
-const onRead = async (readable, onStdoutData, onStdoutDataDone) => {
-	try {
-		const {value, done} = await onStdoutData.next();
-		if (done) {
-			onStdoutDataDone.resolve();
-		} else {
-			readable.push(value);
-		}
-	} catch {}
-};
-
-// When `subprocess.stdout` ends/aborts/errors, do the same on `readable`.
-// Await the subprocess, for the same reason as above.
-const onStdoutFinished = async ({subprocessStdout, onStdoutDataDone, readable, subprocess, subprocessStdin}) => {
-	try {
-		await waitForSubprocessStdout(subprocessStdout);
-		await subprocess;
-		await safeWaitForSubprocessStdin(subprocessStdin);
-		await onStdoutDataDone;
-
-		if (readable.readable) {
-			readable.push(null);
-		}
-	} catch (error) {
-		await safeWaitForSubprocessStdin(subprocessStdin);
-		destroyOtherReadable(readable, error);
-	}
-};
-
-// When `readable` aborts/errors, do the same on `subprocess.stdout`
-const onReadableDestroy = async ({subprocessStdout, subprocess, waitReadableDestroy}, error) => {
-	if (await waitForConcurrentStreams(waitReadableDestroy, subprocess)) {
-		destroyOtherReadable(subprocessStdout, error);
-		await waitForSubprocess(subprocess, error);
-	}
-};
-
-const destroyOtherReadable = (stream, error) => {
-	destroyOtherStream(stream, stream.readable, error);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/writable.js
-
-
-
-
-
-
-// Create a `Writable` stream that forwards to `stdin` and awaits the subprocess
-const createWritable = ({subprocess, concurrentStreams}, {to} = {}) => {
-	const {subprocessStdin, waitWritableFinal, waitWritableDestroy} = getSubprocessStdin(subprocess, to, concurrentStreams);
-	const writable = new external_node_stream_.Writable({
-		...getWritableMethods(subprocessStdin, subprocess, waitWritableFinal),
-		destroy: (0,external_node_util_.callbackify)(onWritableDestroy.bind(undefined, {
-			subprocessStdin,
-			subprocess,
-			waitWritableFinal,
-			waitWritableDestroy,
-		})),
-		highWaterMark: subprocessStdin.writableHighWaterMark,
-		objectMode: subprocessStdin.writableObjectMode,
-	});
-	onStdinFinished(subprocessStdin, writable);
-	return writable;
-};
-
-// Retrieve `stdin` (or other stream depending on `to`)
-const getSubprocessStdin = (subprocess, to, concurrentStreams) => {
-	const subprocessStdin = getToStream(subprocess, to);
-	const waitWritableFinal = addConcurrentStream(concurrentStreams, subprocessStdin, 'writableFinal');
-	const waitWritableDestroy = addConcurrentStream(concurrentStreams, subprocessStdin, 'writableDestroy');
-	return {subprocessStdin, waitWritableFinal, waitWritableDestroy};
-};
-
-const getWritableMethods = (subprocessStdin, subprocess, waitWritableFinal) => ({
-	write: onWrite.bind(undefined, subprocessStdin),
-	final: (0,external_node_util_.callbackify)(onWritableFinal.bind(undefined, subprocessStdin, subprocess, waitWritableFinal)),
-});
-
-// Forwards data from `writable` to `stdin`
-const onWrite = (subprocessStdin, chunk, encoding, done) => {
-	if (subprocessStdin.write(chunk, encoding)) {
-		done();
-	} else {
-		subprocessStdin.once('drain', done);
-	}
-};
-
-// Ensures that the writable `final` and readable `end` events awaits the subprocess.
-// Like this, any subprocess failure is propagated as a stream `error` event, instead of being lost.
-// The user does not need to `await` the subprocess anymore, but now needs to await the stream completion or error.
-// When multiple writables are targeting the same stream, they wait for each other, unless the subprocess ends first.
-const onWritableFinal = async (subprocessStdin, subprocess, waitWritableFinal) => {
-	if (await waitForConcurrentStreams(waitWritableFinal, subprocess)) {
-		if (subprocessStdin.writable) {
-			subprocessStdin.end();
-		}
-
-		await subprocess;
-	}
-};
-
-// When `subprocess.stdin` ends/aborts/errors, do the same on `writable`.
-const onStdinFinished = async (subprocessStdin, writable, subprocessStdout) => {
-	try {
-		await waitForSubprocessStdin(subprocessStdin);
-		if (writable.writable) {
-			writable.end();
-		}
-	} catch (error) {
-		await safeWaitForSubprocessStdout(subprocessStdout);
-		destroyOtherWritable(writable, error);
-	}
-};
-
-// When `writable` aborts/errors, do the same on `subprocess.stdin`
-const onWritableDestroy = async ({subprocessStdin, subprocess, waitWritableFinal, waitWritableDestroy}, error) => {
-	await waitForConcurrentStreams(waitWritableFinal, subprocess);
-	if (await waitForConcurrentStreams(waitWritableDestroy, subprocess)) {
-		destroyOtherWritable(subprocessStdin, error);
-		await waitForSubprocess(subprocess, error);
-	}
-};
-
-const destroyOtherWritable = (stream, error) => {
-	destroyOtherStream(stream, stream.writable, error);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/duplex.js
-
-
-
-
-
-
-// Create a `Duplex` stream combining both `subprocess.readable()` and `subprocess.writable()`
-const createDuplex = ({subprocess, concurrentStreams, encoding}, {from, to, binary: binaryOption = true, preserveNewlines = true} = {}) => {
-	const binary = binaryOption || BINARY_ENCODINGS.has(encoding);
-	const {subprocessStdout, waitReadableDestroy} = getSubprocessStdout(subprocess, from, concurrentStreams);
-	const {subprocessStdin, waitWritableFinal, waitWritableDestroy} = getSubprocessStdin(subprocess, to, concurrentStreams);
-	const {readableEncoding, readableObjectMode, readableHighWaterMark} = getReadableOptions(subprocessStdout, binary);
-	const {read, onStdoutDataDone} = getReadableMethods({
-		subprocessStdout,
-		subprocess,
-		binary,
-		encoding,
-		preserveNewlines,
-	});
-	const duplex = new external_node_stream_.Duplex({
-		read,
-		...getWritableMethods(subprocessStdin, subprocess, waitWritableFinal),
-		destroy: (0,external_node_util_.callbackify)(onDuplexDestroy.bind(undefined, {
-			subprocessStdout,
-			subprocessStdin,
-			subprocess,
-			waitReadableDestroy,
-			waitWritableFinal,
-			waitWritableDestroy,
-		})),
-		readableHighWaterMark,
-		writableHighWaterMark: subprocessStdin.writableHighWaterMark,
-		readableObjectMode,
-		writableObjectMode: subprocessStdin.writableObjectMode,
-		encoding: readableEncoding,
-	});
-	onStdoutFinished({
-		subprocessStdout,
-		onStdoutDataDone,
-		readable: duplex,
-		subprocess,
-		subprocessStdin,
-	});
-	onStdinFinished(subprocessStdin, duplex, subprocessStdout);
-	return duplex;
-};
-
-const onDuplexDestroy = async ({subprocessStdout, subprocessStdin, subprocess, waitReadableDestroy, waitWritableFinal, waitWritableDestroy}, error) => {
-	await Promise.all([
-		onReadableDestroy({subprocessStdout, subprocess, waitReadableDestroy}, error),
-		onWritableDestroy({
-			subprocessStdin,
-			subprocess,
-			waitWritableFinal,
-			waitWritableDestroy,
-		}, error),
-	]);
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/iterable.js
-
-
-
-
-// Convert the subprocess to an async iterable
-const createIterable = (subprocess, encoding, {
-	from,
-	binary: binaryOption = false,
-	preserveNewlines = false,
-} = {}) => {
-	const binary = binaryOption || BINARY_ENCODINGS.has(encoding);
-	const subprocessStdout = getFromStream(subprocess, from);
-	const onStdoutData = iterateOnSubprocessStream({
-		subprocessStdout,
-		subprocess,
-		binary,
-		shouldEncode: true,
-		encoding,
-		preserveNewlines,
-	});
-	return iterateOnStdoutData(onStdoutData, subprocessStdout, subprocess);
-};
-
-const iterateOnStdoutData = async function * (onStdoutData, subprocessStdout, subprocess) {
-	try {
-		yield * onStdoutData;
-	} finally {
-		if (subprocessStdout.readable) {
-			subprocessStdout.destroy();
-		}
-
-		await subprocess;
-	}
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/convert/add.js
-
-
-
-
-
-
-// Add methods to convert the subprocess to a stream or iterable
-const addConvertedStreams = (subprocess, {encoding}) => {
-	const concurrentStreams = initializeConcurrentStreams();
-	subprocess.readable = createReadable.bind(undefined, {subprocess, concurrentStreams, encoding});
-	subprocess.writable = createWritable.bind(undefined, {subprocess, concurrentStreams});
-	subprocess.duplex = createDuplex.bind(undefined, {subprocess, concurrentStreams, encoding});
-	subprocess.iterable = createIterable.bind(undefined, subprocess, encoding);
-	subprocess[Symbol.asyncIterator] = createIterable.bind(undefined, subprocess, encoding, {});
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/promise.js
-// The return value is a mixin of `subprocess` and `Promise`
-const promise_mergePromise = (subprocess, promise) => {
-	for (const [property, descriptor] of promise_descriptors) {
-		const value = descriptor.value.bind(promise);
-		Reflect.defineProperty(subprocess, property, {...descriptor, value});
-	}
-};
-
-// eslint-disable-next-line unicorn/prefer-top-level-await
-const promise_nativePromisePrototype = (async () => {})().constructor.prototype;
-
-const promise_descriptors = ['then', 'catch', 'finally'].map(property => [
-	property,
-	Reflect.getOwnPropertyDescriptor(promise_nativePromisePrototype, property),
-]);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/main-async.js
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Main shared logic for all async methods: `execa()`, `$`, `execaNode()`
-const execaCoreAsync = (rawFile, rawArguments, rawOptions, createNested) => {
-	const {file, commandArguments, command, escapedCommand, startTime, verboseInfo, options, fileDescriptors} = handleAsyncArguments(rawFile, rawArguments, rawOptions);
-	const {subprocess, promise} = spawnSubprocessAsync({
-		file,
-		commandArguments,
-		options,
-		startTime,
-		verboseInfo,
-		command,
-		escapedCommand,
-		fileDescriptors,
-	});
-	subprocess.pipe = pipeToSubprocess.bind(undefined, {
-		source: subprocess,
-		sourcePromise: promise,
-		boundOptions: {},
-		createNested,
-	});
-	promise_mergePromise(subprocess, promise);
-	SUBPROCESS_OPTIONS.set(subprocess, {options, fileDescriptors});
-	return subprocess;
-};
-
-// Compute arguments to pass to `child_process.spawn()`
-const handleAsyncArguments = (rawFile, rawArguments, rawOptions) => {
-	const {command, escapedCommand, startTime, verboseInfo} = handleCommand(rawFile, rawArguments, rawOptions);
-	const {file, commandArguments, options: normalizedOptions} = options_normalizeOptions(rawFile, rawArguments, rawOptions);
-	const options = handleAsyncOptions(normalizedOptions);
-	const fileDescriptors = handleStdioAsync(options, verboseInfo);
-	return {
-		file,
-		commandArguments,
-		command,
-		escapedCommand,
-		startTime,
-		verboseInfo,
-		options,
-		fileDescriptors,
-	};
-};
-
-// Options normalization logic specific to async methods.
-// Prevent passing the `timeout` option directly to `child_process.spawn()`.
-const handleAsyncOptions = ({timeout, signal, ...options}) => {
-	if (signal !== undefined) {
-		throw new TypeError('The "signal" option has been renamed to "cancelSignal" instead.');
-	}
-
-	return {...options, timeoutDuration: timeout};
-};
-
-const spawnSubprocessAsync = ({file, commandArguments, options, startTime, verboseInfo, command, escapedCommand, fileDescriptors}) => {
-	let subprocess;
-	try {
-		subprocess = (0,external_node_child_process_namespaceObject.spawn)(...concatenateShell(file, commandArguments, options));
-	} catch (error) {
-		return handleEarlyError({
-			error,
-			command,
-			escapedCommand,
-			fileDescriptors,
-			options,
-			startTime,
-			verboseInfo,
-		});
-	}
-
-	const controller = new AbortController();
-	(0,external_node_events_.setMaxListeners)(Number.POSITIVE_INFINITY, controller.signal);
-
-	const originalStreams = [...subprocess.stdio];
-	pipeOutputAsync(subprocess, fileDescriptors, controller);
-	cleanupOnExit(subprocess, options, controller);
-
-	const context = {};
-	const onInternalError = createDeferred();
-	subprocess.kill = subprocessKill.bind(undefined, {
-		kill: subprocess.kill.bind(subprocess),
-		options,
-		onInternalError,
-		context,
-		controller,
-	});
-	subprocess.all = all_async_makeAllStream(subprocess, options);
-	addConvertedStreams(subprocess, options);
-	addIpcMethods(subprocess, options);
-
-	const promise = handlePromise({
-		subprocess,
-		options,
-		startTime,
-		verboseInfo,
-		fileDescriptors,
-		originalStreams,
-		command,
-		escapedCommand,
-		context,
-		onInternalError,
-		controller,
-	});
-	return {subprocess, promise};
-};
-
-// Asynchronous logic, as opposed to the previous logic which can be run synchronously, i.e. can be returned to user right away
-const handlePromise = async ({subprocess, options, startTime, verboseInfo, fileDescriptors, originalStreams, command, escapedCommand, context, onInternalError, controller}) => {
-	const [
-		errorInfo,
-		[exitCode, signal],
-		stdioResults,
-		allResult,
-		ipcOutput,
-	] = await waitForSubprocessResult({
-		subprocess,
-		options,
-		context,
-		verboseInfo,
-		fileDescriptors,
-		originalStreams,
-		onInternalError,
-		controller,
-	});
-	controller.abort();
-	onInternalError.resolve();
-
-	const stdio = stdioResults.map((stdioResult, fdNumber) => stripNewline(stdioResult, options, fdNumber));
-	const all = stripNewline(allResult, options, 'all');
-	const result = getAsyncResult({
-		errorInfo,
-		exitCode,
-		signal,
-		stdio,
-		all,
-		ipcOutput,
-		context,
-		options,
-		command,
-		escapedCommand,
-		startTime,
-	});
-	return handleResult(result, verboseInfo, options);
-};
-
-const getAsyncResult = ({errorInfo, exitCode, signal, stdio, all, ipcOutput, context, options, command, escapedCommand, startTime}) => 'error' in errorInfo
-	? result_makeError({
-		error: errorInfo.error,
-		command,
-		escapedCommand,
-		timedOut: context.terminationReason === 'timeout',
-		isCanceled: context.terminationReason === 'cancel' || context.terminationReason === 'gracefulCancel',
-		isGracefullyCanceled: context.terminationReason === 'gracefulCancel',
-		isMaxBuffer: errorInfo.error instanceof contents_MaxBufferError,
-		isForcefullyTerminated: context.isForcefullyTerminated,
-		exitCode,
-		signal,
-		stdio,
-		all,
-		ipcOutput,
-		options,
-		startTime,
-		isSync: false,
-	})
-	: makeSuccessResult({
-		command,
-		escapedCommand,
-		stdio,
-		all,
-		ipcOutput,
-		options,
-		startTime,
-	});
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/bind.js
-
-
-
-// Deep merge specific options like `env`. Shallow merge the other ones.
-const mergeOptions = (boundOptions, options) => {
-	const newOptions = Object.fromEntries(
-		Object.entries(options).map(([optionName, optionValue]) => [
-			optionName,
-			mergeOption(optionName, boundOptions[optionName], optionValue),
-		]),
-	);
-	return {...boundOptions, ...newOptions};
-};
-
-const mergeOption = (optionName, boundOptionValue, optionValue) => {
-	if (DEEP_OPTIONS.has(optionName) && is_plain_obj_isPlainObject(boundOptionValue) && is_plain_obj_isPlainObject(optionValue)) {
-		return {...boundOptionValue, ...optionValue};
-	}
-
-	return optionValue;
-};
-
-const DEEP_OPTIONS = new Set(['env', ...FD_SPECIFIC_OPTIONS]);
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/create.js
-
-
-
-
-
-
-
-// Wraps every exported methods to provide the following features:
-//  - template string syntax: execa`command argument`
-//  - options binding: boundExeca = execa(options)
-//  - optional argument/options: execa(file), execa(file, args), execa(file, options), execa(file, args, options)
-// `mapArguments()` and `setBoundExeca()` allows for method-specific logic.
-const createExeca = (mapArguments, boundOptions, deepOptions, setBoundExeca) => {
-	const createNested = (mapArguments, boundOptions, setBoundExeca) => createExeca(mapArguments, boundOptions, deepOptions, setBoundExeca);
-	const boundExeca = (...execaArguments) => callBoundExeca({
-		mapArguments,
-		deepOptions,
-		boundOptions,
-		setBoundExeca,
-		createNested,
-	}, ...execaArguments);
-
-	if (setBoundExeca !== undefined) {
-		setBoundExeca(boundExeca, createNested, boundOptions);
-	}
-
-	return boundExeca;
-};
-
-const callBoundExeca = ({mapArguments, deepOptions = {}, boundOptions = {}, setBoundExeca, createNested}, firstArgument, ...nextArguments) => {
-	if (is_plain_obj_isPlainObject(firstArgument)) {
-		return createNested(mapArguments, mergeOptions(boundOptions, firstArgument), setBoundExeca);
-	}
-
-	const {file, commandArguments, options, isSync} = parseArguments({
-		mapArguments,
-		firstArgument,
-		nextArguments,
-		deepOptions,
-		boundOptions,
-	});
-	return isSync
-		? execaCoreSync(file, commandArguments, options)
-		: execaCoreAsync(file, commandArguments, options, createNested);
-};
-
-const parseArguments = ({mapArguments, firstArgument, nextArguments, deepOptions, boundOptions}) => {
-	const callArguments = isTemplateString(firstArgument)
-		? template_parseTemplates(firstArgument, nextArguments)
-		: [firstArgument, ...nextArguments];
-	const [initialFile, initialArguments, initialOptions] = normalizeParameters(...callArguments);
-	const mergedOptions = mergeOptions(mergeOptions(deepOptions, boundOptions), initialOptions);
-	const {
-		file = initialFile,
-		commandArguments = initialArguments,
-		options = mergedOptions,
-		isSync = false,
-	} = mapArguments({file: initialFile, commandArguments: initialArguments, options: mergedOptions});
-	return {
-		file,
-		commandArguments,
-		options,
-		isSync,
-	};
-};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/command.js
-// Main logic for `execaCommand()`
-const mapCommandAsync = ({file, commandArguments}) => methods_command_parseCommand(file, commandArguments);
-
-// Main logic for `execaCommandSync()`
-const mapCommandSync = ({file, commandArguments}) => ({...methods_command_parseCommand(file, commandArguments), isSync: true});
-
-// Convert `execaCommand(command)` into `execa(file, ...commandArguments)`
-const methods_command_parseCommand = (command, unusedArguments) => {
-	if (unusedArguments.length > 0) {
-		throw new TypeError(`The command and its arguments must be passed as a single string: ${command} ${unusedArguments}.`);
-	}
-
-	const [file, ...commandArguments] = parseCommandString(command);
-	return {file, commandArguments};
-};
-
-// Convert `command` string into an array of file or arguments to pass to $`${...fileOrCommandArguments}`
-const parseCommandString = command => {
-	if (typeof command !== 'string') {
-		throw new TypeError(`The command must be a string: ${String(command)}.`);
-	}
-
-	const trimmedCommand = command.trim();
-	if (trimmedCommand === '') {
-		return [];
-	}
-
-	const tokens = [];
-	for (const token of trimmedCommand.split(command_SPACES_REGEXP)) {
-		// Allow spaces to be escaped by a backslash if not meant as a delimiter
-		const previousToken = tokens.at(-1);
-		if (previousToken && previousToken.endsWith('\\')) {
-			// Merge previous token with current one
-			tokens[tokens.length - 1] = `${previousToken.slice(0, -1)} ${token}`;
-		} else {
-			tokens.push(token);
-		}
-	}
-
-	return tokens;
-};
-
-const command_SPACES_REGEXP = / +/g;
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/lib/methods/script.js
-// Sets `$.sync` and `$.s`
-const setScriptSync = (boundExeca, createNested, boundOptions) => {
-	boundExeca.sync = createNested(mapScriptSync, boundOptions);
-	boundExeca.s = boundExeca.sync;
-};
-
-// Main logic for `$`
-const mapScriptAsync = ({options}) => getScriptOptions(options);
-
-// Main logic for `$.sync`
-const mapScriptSync = ({options}) => ({...getScriptOptions(options), isSync: true});
-
-// `$` is like `execa` but with script-friendly options: `{stdin: 'inherit', preferLocal: true}`
-const getScriptOptions = options => ({options: {...getScriptStdinOption(options), ...options}});
-
-const getScriptStdinOption = ({input, inputFile, stdio}) => input === undefined && inputFile === undefined && stdio === undefined
-	? {stdin: 'inherit'}
-	: {};
-
-// When using $(...).pipe(...), most script-friendly options should apply to both commands.
-// However, some options (like `stdin: 'inherit'`) would create issues with piping, i.e. cannot be deep.
-const deepScriptOptions = {preferLocal: true};
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/node_modules/execa/index.js
-
-
-
-
-
-
-
-
-
-const execa_execa = createExeca(() => ({}));
-const execa_execaSync = createExeca(() => ({isSync: true}));
-const execa_execaCommand = createExeca(mapCommandAsync);
-const execa_execaCommandSync = createExeca(mapCommandSync);
-const execa_execaNode = createExeca(mapNode);
-const execa_$ = createExeca(mapScriptAsync, {}, deepScriptOptions, setScriptSync);
-
-const {
-	sendMessage: execa_sendMessage,
-	getOneMessage: execa_getOneMessage,
-	getEachMessage: execa_getEachMessage,
-	getCancelSignal: execa_getCancelSignal,
-} = getIpcExport();
-
-
-;// CONCATENATED MODULE: ./node_modules/jpegtran-bin/lib/index.js
-
-
-
-
-
-const pkg = JSON.parse(external_node_fs_namespaceObject.readFileSync(__nccwpck_require__.ab + "package.json"));
-const lib_url = `https://raw.githubusercontent.com/imagemin/jpegtran-bin/v${pkg.version}/vendor/`;
-
-const binWrapper = new bin_wrapper()
-	.src(`${lib_url}macos/jpegtran`, 'darwin')
-	.src(`${lib_url}linux/x86/jpegtran`, 'linux', 'x86')
-	.src(`${lib_url}linux/x64/jpegtran`, 'linux', 'x64')
-	.src(`${lib_url}freebsd/x86/jpegtran`, 'freebsd', 'x86')
-	.src(`${lib_url}freebsd/x64/jpegtran`, 'freebsd', 'x64')
-	.src(`${lib_url}sunos/x86/jpegtran`, 'sunos', 'x86')
-	.src(`${lib_url}sunos/x64/jpegtran`, 'sunos', 'x64')
-	.src(`${lib_url}win/x86/jpegtran.exe`, 'win32', 'x86')
-	.src(`${lib_url}win/x64/jpegtran.exe`, 'win32', 'x64')
-	.src(`${lib_url}win/x86/libjpeg-62.dll`, 'win32', 'x86')
-	.src(`${lib_url}win/x64/libjpeg-62.dll`, 'win32', 'x64')
-	.dest((0,external_node_url_.fileURLToPath)(__nccwpck_require__.ab + "vendor"))
-	.use(external_node_process_namespaceObject.platform === 'win32' ? 'jpegtran.exe' : 'jpegtran');
-
-/* harmony default export */ const jpegtran_bin_lib = (binWrapper);
-
-;// CONCATENATED MODULE: ./node_modules/jpegtran-bin/index.js
-
-
-/* harmony default export */ const jpegtran_bin = (jpegtran_bin_lib.path());
-
-;// CONCATENATED MODULE: ./node_modules/imagemin-jpegtran/index.js
-
-
-
-
-
-
-
-
-
-
-function imageminJpegtran(options = {}) {
-	return async function (data) {
-		assertUint8Array(data);
-
-		const fileType = await fileTypeFromBuffer(data);
-		if (!fileType || fileType.mime !== 'image/jpeg') {
-			return data;
-		}
-
-		const dimensions = imageDimensionsFromData(data);
-		if (dimensions?.width === 0 && dimensions?.height === 0) {
-			return data;
-		}
-
-		const arguments_ = ['-copy', 'none'];
-
-		if (options.progressive) {
-			arguments_.push('-progressive');
-		}
-
-		if (options.arithmetic) {
-			arguments_.push('-arithmetic');
-		} else {
-			arguments_.push('-optimize');
-		}
-
-		const inputPath = external_node_path_namespaceObject.join((0,external_node_os_namespaceObject.tmpdir)(), `input-${(0,external_node_crypto_.randomUUID)()}.jpg`);
-		const outputPath = external_node_path_namespaceObject.join((0,external_node_os_namespaceObject.tmpdir)(), `output-${(0,external_node_crypto_.randomUUID)()}.jpg`);
-
-		arguments_.push('-outfile', outputPath, inputPath);
-
-		await promises_namespaceObject.writeFile(inputPath, data);
-
-		try {
-			await execa_execa(jpegtran_bin, arguments_);
-			return await promises_namespaceObject.readFile(outputPath);
-		} finally {
-			// Clean up temporary files
-			await Promise.all([
-				promises_namespaceObject.unlink(inputPath).catch(() => {}),
-				promises_namespaceObject.unlink(outputPath).catch(() => {}),
-			]);
-		}
-	};
-}
-
+// EXTERNAL MODULE: ./node_modules/imagemin-pngquant/index.js
+var imagemin_pngquant = __nccwpck_require__(48788);
+// EXTERNAL MODULE: ./node_modules/imagemin-jpegtran/index.js
+var imagemin_jpegtran = __nccwpck_require__(71285);
 // EXTERNAL MODULE: ./node_modules/imagemin-gifsicle/index.js
 var imagemin_gifsicle = __nccwpck_require__(78438);
 ;// CONCATENATED MODULE: ./src/migrateNotionImage.js
@@ -296747,8 +287216,8 @@ function compressPic(item) {
     return imagemin
         .buffer(item.buffer, {
             plugins: [
-                imageminPngquant(),
-                imageminJpegtran(),
+                imagemin_pngquant(),
+                imagemin_jpegtran(),
                 imagemin_gifsicle(),
             ],
         })
@@ -303153,7 +293622,7 @@ function verifyPseudoArgs(func, name, subselect, argIndex) {
 /**
  * Aliases are pseudos that are expressed as selectors.
  */
-const aliases_aliases = {
+const aliases = {
     // Links
     "any-link": ":is(a, area, link)[href]",
     link: ":any-link:not(:visited)",
@@ -303297,7 +293766,7 @@ function compilePseudoSelector(next, selector, options, context, compileToken) {
         return subselects[name](next, data, options, context, compileToken);
     }
     const userPseudo = (_a = options.pseudos) === null || _a === void 0 ? void 0 : _a[name];
-    const stringPseudo = typeof userPseudo === "string" ? userPseudo : aliases_aliases[name];
+    const stringPseudo = typeof userPseudo === "string" ? userPseudo : aliases[name];
     if (typeof stringPseudo === "string") {
         if (data != null) {
             throw new Error(`Pseudo ${name} doesn't have any arguments`);
@@ -307556,98 +298025,98 @@ function getTagID(tagName) {
     var _a;
     return (_a = TAG_NAME_TO_ID.get(tagName)) !== null && _a !== void 0 ? _a : TAG_ID.UNKNOWN;
 }
-const html_$ = TAG_ID;
+const $ = TAG_ID;
 const SPECIAL_ELEMENTS = {
     [NS.HTML]: new Set([
-        html_$.ADDRESS,
-        html_$.APPLET,
-        html_$.AREA,
-        html_$.ARTICLE,
-        html_$.ASIDE,
-        html_$.BASE,
-        html_$.BASEFONT,
-        html_$.BGSOUND,
-        html_$.BLOCKQUOTE,
-        html_$.BODY,
-        html_$.BR,
-        html_$.BUTTON,
-        html_$.CAPTION,
-        html_$.CENTER,
-        html_$.COL,
-        html_$.COLGROUP,
-        html_$.DD,
-        html_$.DETAILS,
-        html_$.DIR,
-        html_$.DIV,
-        html_$.DL,
-        html_$.DT,
-        html_$.EMBED,
-        html_$.FIELDSET,
-        html_$.FIGCAPTION,
-        html_$.FIGURE,
-        html_$.FOOTER,
-        html_$.FORM,
-        html_$.FRAME,
-        html_$.FRAMESET,
-        html_$.H1,
-        html_$.H2,
-        html_$.H3,
-        html_$.H4,
-        html_$.H5,
-        html_$.H6,
-        html_$.HEAD,
-        html_$.HEADER,
-        html_$.HGROUP,
-        html_$.HR,
-        html_$.HTML,
-        html_$.IFRAME,
-        html_$.IMG,
-        html_$.INPUT,
-        html_$.LI,
-        html_$.LINK,
-        html_$.LISTING,
-        html_$.MAIN,
-        html_$.MARQUEE,
-        html_$.MENU,
-        html_$.META,
-        html_$.NAV,
-        html_$.NOEMBED,
-        html_$.NOFRAMES,
-        html_$.NOSCRIPT,
-        html_$.OBJECT,
-        html_$.OL,
-        html_$.P,
-        html_$.PARAM,
-        html_$.PLAINTEXT,
-        html_$.PRE,
-        html_$.SCRIPT,
-        html_$.SECTION,
-        html_$.SELECT,
-        html_$.SOURCE,
-        html_$.STYLE,
-        html_$.SUMMARY,
-        html_$.TABLE,
-        html_$.TBODY,
-        html_$.TD,
-        html_$.TEMPLATE,
-        html_$.TEXTAREA,
-        html_$.TFOOT,
-        html_$.TH,
-        html_$.THEAD,
-        html_$.TITLE,
-        html_$.TR,
-        html_$.TRACK,
-        html_$.UL,
-        html_$.WBR,
-        html_$.XMP,
+        $.ADDRESS,
+        $.APPLET,
+        $.AREA,
+        $.ARTICLE,
+        $.ASIDE,
+        $.BASE,
+        $.BASEFONT,
+        $.BGSOUND,
+        $.BLOCKQUOTE,
+        $.BODY,
+        $.BR,
+        $.BUTTON,
+        $.CAPTION,
+        $.CENTER,
+        $.COL,
+        $.COLGROUP,
+        $.DD,
+        $.DETAILS,
+        $.DIR,
+        $.DIV,
+        $.DL,
+        $.DT,
+        $.EMBED,
+        $.FIELDSET,
+        $.FIGCAPTION,
+        $.FIGURE,
+        $.FOOTER,
+        $.FORM,
+        $.FRAME,
+        $.FRAMESET,
+        $.H1,
+        $.H2,
+        $.H3,
+        $.H4,
+        $.H5,
+        $.H6,
+        $.HEAD,
+        $.HEADER,
+        $.HGROUP,
+        $.HR,
+        $.HTML,
+        $.IFRAME,
+        $.IMG,
+        $.INPUT,
+        $.LI,
+        $.LINK,
+        $.LISTING,
+        $.MAIN,
+        $.MARQUEE,
+        $.MENU,
+        $.META,
+        $.NAV,
+        $.NOEMBED,
+        $.NOFRAMES,
+        $.NOSCRIPT,
+        $.OBJECT,
+        $.OL,
+        $.P,
+        $.PARAM,
+        $.PLAINTEXT,
+        $.PRE,
+        $.SCRIPT,
+        $.SECTION,
+        $.SELECT,
+        $.SOURCE,
+        $.STYLE,
+        $.SUMMARY,
+        $.TABLE,
+        $.TBODY,
+        $.TD,
+        $.TEMPLATE,
+        $.TEXTAREA,
+        $.TFOOT,
+        $.TH,
+        $.THEAD,
+        $.TITLE,
+        $.TR,
+        $.TRACK,
+        $.UL,
+        $.WBR,
+        $.XMP,
     ]),
-    [NS.MATHML]: new Set([html_$.MI, html_$.MO, html_$.MN, html_$.MS, html_$.MTEXT, html_$.ANNOTATION_XML]),
-    [NS.SVG]: new Set([html_$.TITLE, html_$.FOREIGN_OBJECT, html_$.DESC]),
+    [NS.MATHML]: new Set([$.MI, $.MO, $.MN, $.MS, $.MTEXT, $.ANNOTATION_XML]),
+    [NS.SVG]: new Set([$.TITLE, $.FOREIGN_OBJECT, $.DESC]),
     [NS.XLINK]: new Set(),
     [NS.XML]: new Set(),
     [NS.XMLNS]: new Set(),
 };
-const NUMBERED_HEADERS = new Set([html_$.H1, html_$.H2, html_$.H3, html_$.H4, html_$.H5, html_$.H6]);
+const NUMBERED_HEADERS = new Set([$.H1, $.H2, $.H3, $.H4, $.H5, $.H6]);
 const UNESCAPED_TEXT = new Set([
     TAG_NAMES.STYLE,
     TAG_NAMES.SCRIPT,
@@ -315294,7 +305763,7 @@ class ParserStream extends external_node_stream_.Writable {
 }
 //# sourceMappingURL=index.js.map
 // EXTERNAL MODULE: ./node_modules/iconv-lite/lib/index.js
-var iconv_lite_lib = __nccwpck_require__(31748);
+var lib = __nccwpck_require__(31748);
 // EXTERNAL MODULE: ./node_modules/whatwg-encoding/lib/whatwg-encoding.js
 var whatwg_encoding = __nccwpck_require__(86476);
 ;// CONCATENATED MODULE: ./node_modules/encoding-sniffer/dist/esm/sniffer.js
@@ -316331,7 +306800,7 @@ class esm_DecodeStream extends external_node_stream_.Transform {
         if (this.iconv) {
             return this.iconv;
         }
-        const stream = iconv_lite_lib.decodeStream(this.sniffer.encoding);
+        const stream = lib.decodeStream(this.sniffer.encoding);
         stream.on("data", (chunk) => this.push(chunk, "utf-8"));
         stream.on("end", () => this.push(null));
         this.iconv = stream;
@@ -317539,7 +308008,7 @@ let src_config = {
 process.env.PATH = __dirname + ":" + process.env.PATH;
 // add all the exec file under __dirname/vendor* dirs the executable permission expect the source dir
 const { execSync } = require("child_process");
-const { url: src_url } = require("inspector");
+const { url } = require("inspector");
 const { BADFAMILY } = require("dns");
 // try to find all the files under __dirname/vendor* dirs and set the executable permission
 try {
